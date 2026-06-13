@@ -1,0 +1,25 @@
+[
+  {
+    "id": "endpoint:credits.calculate",
+    "type": "endpoint",
+    "name": "POST /api/credits/calculate",
+    "path": "src/app/api/credits/calculate/route.ts",
+    "method": "POST",
+    "body": "Calcula la simulación del crédito sin persistir. Recibe { monto, plazo, tasa, fecha_desembolso } y devuelve tabla de amortización completa más resumen (interés total, costo financiero, CAT). Endpoint puro de cómputo; no requiere autorización del Comité.",
+    "terms": ["calcular", "simulación", "amortización", "cat"],
+    "applies": ["rule:tasa-interes", "decision:adr-0001"],
+    "consumes": [],
+    "owner": "backend"
+  },
+  {
+    "id": "endpoint:credits.create",
+    "type": "endpoint",
+    "name": "POST /api/credits",
+    "path": "src/app/api/credits/route.ts",
+    "method": "POST",
+    "body": "Crea un crédito en estado en_proceso. Valida plazo contra rule:plazos antes de persistir; rechaza con 422 si el plazo no está en el catálogo. Dispara workflow de aprobación del Comité.",
+    "terms": ["crear", "alta", "crédito", "originación"],
+    "applies": ["rule:plazos"],
+    "owner": "backend"
+  }
+]

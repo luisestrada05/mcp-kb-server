@@ -1,0 +1,12 @@
+[
+  {
+    "id": "module:credits",
+    "type": "module",
+    "name": "credits",
+    "path": "modules/credits/",
+    "body": "Módulo de gestión de créditos. Cubre originación (alta, simulación, aprobación), administración (cambios de estado, modificaciones contractuales) y formalización (firma, desembolso). Owner: equipo de Originación.",
+    "terms": ["crédito", "originación", "formalización", "comité"],
+    "exposes": ["endpoint:credits.calculate", "endpoint:credits.create"],
+    "owner": "originacion"
+  }
+]

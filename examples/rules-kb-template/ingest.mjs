@@ -1,31 +1,57 @@
 /**
- * Rules KB ingestion plugin — starter template.
+ * Rules + Tech KB ingestion plugin — starter template.
+ *
+ * Two source roots, each serving a DevFlow phase:
+ *
+ *   docs/**\/*.md       (narrative)  — rules, decisions, glossary terms.
+ *                                       Used by /devflow:specify to ground
+ *                                       the spec in business reality.
+ *   manifests/**\/*.json (declarative) — components, endpoints, modules,
+ *                                        services. Used by /devflow:plan to
+ *                                        identify "where the change lives."
+ *
+ * Both stream into the SAME graph, so cross-domain edges (e.g. component
+ * `implements` rule, endpoint `applies` rule) connect "what we must respect"
+ * (specify) with "where we touch it" (plan).
  *
  * Copy this folder into your project's `tools/kb-ingest/`, then adapt the
- * pieces marked with `[PROJECT]` comments. The defaults work for projects
- * whose canonical sources are markdown files with YAML-ish frontmatter.
+ * pieces marked with `[PROJECT]`. The defaults are dependency-free.
  *
  * Default taxonomy:
- *   Entity types:    rule | decision | term
+ *   Entity types:    rule | decision | term | component | endpoint | module | service
  *   Relations:       cites | defines | supersedes
+ *                    implements | applies | exposes | consumes
+ *                    depends_on | tested_by
  *
- * Frontmatter contract:
+ * Markdown frontmatter contract (for docs/):
  *
  *   ---
  *   id: rule:tasa-interes           # REQUIRED, stable ID
  *   type: rule                       # rule | decision | term
  *   name: Tasa de interés ordinaria  # REQUIRED, display name
  *   terms: [tasa, interés]           # OPTIONAL, keyword index entries
- *   status: active                   # OPTIONAL, free-form (active/deprecated/draft)
- *   owner: producto                  # OPTIONAL, team owner
- *
- *   # Relations — arrays of target IDs
- *   cites: [rule:plazos, decision:adr-0001]
- *   defines: [tasa-ordinaria]
- *   supersedes: rule:tasa-vieja
+ *   status: active                   # OPTIONAL, free-form
+ *   cites: [rule:plazos]             # OPTIONAL, edge targets
  *   ---
+ *   <markdown body — FTS-indexed>
  *
- *   <markdown body — this becomes the entity body and is FTS-indexed>
+ * JSON manifest contract (for manifests/): array of objects. Each object is
+ * an entity. Edge-relation keys behave the same as in frontmatter.
+ *
+ *   [
+ *     {
+ *       "id": "component:FormSelectField",
+ *       "type": "component",
+ *       "name": "FormSelectField",
+ *       "path": "src/shared/components/app/form-select-field.tsx",
+ *       "body": "Wrapper de Select integrado con React Hook Form.",
+ *       "terms": ["select", "form"],
+ *       "implements": ["rule:reuso-shadcn-form"]
+ *     }
+ *   ]
+ *
+ * Why JSON manifests instead of YAML: keeps the template dep-free. Swap in
+ * `js-yaml` or `gray-matter` once your manifests outgrow JSON's ergonomics.
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
@@ -34,30 +60,88 @@ import { fileURLToPath } from 'node:url'
 // ─────────────────────────────────────────────────────────────────────────────
 // [PROJECT] Adjust if your taxonomy differs.
 //
-// VALID_TYPES gates the values of `type:` in frontmatter. The plugin REJECTS
-// files whose type is outside the allowlist. Add your project-specific types
-// here (e.g. 'feature', 'policy', 'invariant') if they apply.
-const VALID_TYPES = new Set(['rule', 'decision', 'term'])
+// VALID_TYPES gates the values of `type:` in any source. The plugin REJECTS
+// entries whose type is outside the allowlist. Group conceptually:
+//
+//   Narrative (typically from docs/*.md, used by /devflow:specify):
+//     - rule       business / regulatory / operational rule
+//     - decision   ADR-style decision with context + consequences
+//     - term       canonical definition (glossary entry)
+//
+//   Technical (typically from manifests/*.json, used by /devflow:plan):
+//     - component  UI / library component a feature reuses
+//     - endpoint   HTTP route exposed by the BFF or external API
+//     - module     top-level domain module (modules/credits, modules/auth)
+//     - service    callable service / domain function with a contract
+//
+// Add or remove freely. Each new type is just a string — no code change
+// elsewhere is required.
+const VALID_TYPES = new Set([
+  'rule',
+  'decision',
+  'term',
+  'component',
+  'endpoint',
+  'module',
+  'service',
+])
 
-// EDGE_RELATIONS maps frontmatter keys to graph relations. Each key becomes an
-// outgoing edge from the current entity to every ID listed in its value.
-// Format: { frontmatter_key: relation_name }
-// Add or remove rows to fit your domain (e.g. 'applies_to', 'mitigates').
+// EDGE_RELATIONS maps a frontmatter/manifest key to a graph relation. Each
+// key becomes an outgoing edge from the current entity to every ID in its
+// value. Format: { source_key: relation_name }
+//
+// Conceptual groups:
+//   Narrative-only:
+//     cites        I reference this in my body
+//     defines      I authoritatively define this term
+//     supersedes   I replace this older entity
+//
+//   Cross-domain (bridge narrative ↔ technical — high-value for DevFlow):
+//     implements   component/service IMPLEMENTS a rule
+//     applies      endpoint APPLIES a rule when handling a request
+//     tested_by    entity is verified by another entity (typically a test
+//                  spec file or scenario doc)
+//
+//   Technical-only:
+//     exposes      module EXPOSES a public endpoint or service
+//     consumes     entity CONSUMES (calls) another endpoint/service
+//     depends_on   generic dependency (use sparingly — prefer specific
+//                  relations above when applicable)
 const EDGE_RELATIONS = {
+  // narrative
   cites: 'cites',
   defines: 'defines',
   supersedes: 'supersedes',
+  // cross-domain (rule ↔ technical)
+  implements: 'implements',
+  applies: 'applies',
+  tested_by: 'tested_by',
+  // technical
+  exposes: 'exposes',
+  consumes: 'consumes',
+  depends_on: 'depends_on',
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
-function walk(dir) {
+/**
+ * Recursive walk that filters by extension. Silently returns [] for a missing
+ * directory so the plugin works in projects that only populate `docs/` or
+ * only `manifests/`.
+ */
+function walk(dir, extension) {
   const results = []
-  for (const entry of readdirSync(dir)) {
+  let entries
+  try {
+    entries = readdirSync(dir)
+  } catch {
+    return results
+  }
+  for (const entry of entries) {
     const full = join(dir, entry)
     const stat = statSync(full)
     if (stat.isDirectory()) {
-      results.push(...walk(full))
-    } else if (entry.endsWith('.md')) {
+      results.push(...walk(full, extension))
+    } else if (entry.endsWith(extension)) {
       results.push(full)
     }
   }
@@ -113,61 +197,115 @@ function asArray(v) {
   return [String(v)]
 }
 
+/**
+ * Yield normalized entries (one per entity to be ingested) from `root`.
+ *
+ * Pulls from TWO source layouts:
+ *   <root>/docs/**\/*.md         — markdown + frontmatter (narrative entities)
+ *   <root>/manifests/**\/*.json  — array-of-objects per file (declarative entities)
+ *
+ * Each yielded entry is shape-compatible regardless of source:
+ *   { id, type, name, body, terms, <edge_keys>, <metadata_keys>, sourcePath }
+ *
+ * Missing source roots are silently skipped so a project that only uses one
+ * layout doesn't need to create empty directories.
+ */
+function* loadEntries(root) {
+  // Markdown sources — body is the markdown body, fields come from frontmatter.
+  for (const file of walk(join(root, 'docs'), '.md')) {
+    const { frontmatter, body } = parseFrontmatter(readFileSync(file, 'utf-8'))
+    yield { ...frontmatter, body, sourcePath: file, _source: 'docs' }
+  }
+  // Manifest sources — each JSON file is an array of entity objects.
+  for (const file of walk(join(root, 'manifests'), '.json')) {
+    let parsed
+    try {
+      parsed = JSON.parse(readFileSync(file, 'utf-8'))
+    } catch (err) {
+      yield { _parseError: String(err), sourcePath: file, _source: 'manifests' }
+      continue
+    }
+    if (!Array.isArray(parsed)) {
+      yield {
+        _parseError: 'manifest file must contain a top-level JSON array',
+        sourcePath: file,
+        _source: 'manifests',
+      }
+      continue
+    }
+    for (const obj of parsed) {
+      yield { ...obj, sourcePath: file, _source: 'manifests' }
+    }
+  }
+}
+
 export default {
   name: 'rules-kb-template',
   description:
-    'Starter ingestion: walks docs/**/*.md, parses frontmatter, emits rule/decision/term entities + cites/defines/supersedes edges.',
+    'Starter ingestion: walks docs/**/*.md (narrative) and manifests/**/*.json (declarative), emits a unified knowledge graph for DevFlow specify/plan phases.',
 
   async run(ctx) {
-    // [PROJECT] Default root: <plugin-dir>/docs. Override from the CLI with
+    // [PROJECT] Default root: <plugin-dir>. Override from the CLI with
     //   kb-ingest ingest --db ./kb.db --plugin ./ingest.mjs --opt root=/abs/path
-    // Useful when your docs live elsewhere in the repo.
+    // The plugin then expects <root>/docs/ and/or <root>/manifests/ under it.
     const root = ctx.options.root
       ? String(ctx.options.root)
-      : join(fileURLToPath(new URL('.', import.meta.url)), 'docs')
+      : fileURLToPath(new URL('.', import.meta.url))
 
     ctx.log(`scanning ${root}`)
 
-    const files = walk(root)
     const entities = []
     const edges = []
     const termsByEntity = new Map()
     const rejected = []
 
-    for (const file of files) {
-      const source = readFileSync(file, 'utf-8')
-      const { frontmatter, body } = parseFrontmatter(source)
-
-      const id = frontmatter.id
-      if (!id) {
-        rejected.push({ file, reason: 'missing id in frontmatter' })
+    for (const entry of loadEntries(root)) {
+      const sourcePath = entry.sourcePath
+      if (entry._parseError) {
+        rejected.push({ file: sourcePath, reason: entry._parseError })
         continue
       }
-      const type = frontmatter.type
+      const id = entry.id
+      if (!id) {
+        rejected.push({ file: sourcePath, reason: 'missing id' })
+        continue
+      }
+      const type = entry.type
       if (!type || !VALID_TYPES.has(type)) {
         rejected.push({
-          file,
+          file: sourcePath,
           reason: `invalid type "${String(type)}" (valid: ${[...VALID_TYPES].join(', ')})`,
         })
         continue
       }
-      const name = frontmatter.name ?? id
+      const name = entry.name ?? id
+      const body = entry.body ?? null
 
       // Everything not consumed structurally goes into metadata so queries can
       // filter on it (e.g. `WHERE json_extract(metadata, '$.status') = 'active'`).
-      const reserved = new Set(['id', 'type', 'name', 'terms', ...Object.keys(EDGE_RELATIONS)])
+      const reserved = new Set([
+        'id',
+        'type',
+        'name',
+        'body',
+        'terms',
+        'sourcePath',
+        '_source',
+        '_parseError',
+        ...Object.keys(EDGE_RELATIONS),
+      ])
       const metadata = {}
-      for (const k of Object.keys(frontmatter)) {
-        if (!reserved.has(k)) metadata[k] = frontmatter[k]
+      for (const k of Object.keys(entry)) {
+        if (!reserved.has(k)) metadata[k] = entry[k]
       }
 
-      entities.push({ id, type, name, body, metadata, sourcePath: file })
+      entities.push({ id, type, name, body, metadata, sourcePath })
 
-      const terms = asArray(frontmatter.terms)
+      const terms = asArray(entry.terms)
       if (terms.length > 0) termsByEntity.set(id, terms)
 
-      for (const [fmKey, relation] of Object.entries(EDGE_RELATIONS)) {
-        for (const target of asArray(frontmatter[fmKey])) {
+      for (const [srcKey, relation] of Object.entries(EDGE_RELATIONS)) {
+        for (const target of asArray(entry[srcKey])) {
           edges.push({ src: id, dst: target, relation })
         }
       }

@@ -1,0 +1,36 @@
+[
+  {
+    "id": "component:InterestRateInput",
+    "type": "component",
+    "name": "InterestRateInput",
+    "path": "src/features/credits/components/InterestRateInput.tsx",
+    "body": "Input numérico para tasa de interés anual. Acepta porcentaje en formato decimal (ej. 24.5). Valida que el valor caiga dentro del catálogo de tasas autorizadas. Integrado con React Hook Form vía FormField wrapper.",
+    "terms": ["tasa", "interés", "input"],
+    "implements": ["rule:tasa-interes"],
+    "owner": "frontend",
+    "stability": "stable"
+  },
+  {
+    "id": "component:LoanTermSelector",
+    "type": "component",
+    "name": "LoanTermSelector",
+    "path": "src/features/credits/components/LoanTermSelector.tsx",
+    "body": "Selector de plazo del crédito. Renderiza únicamente las opciones del catálogo autorizado (3, 6, 9, 12, 18, 24, 36, 48, 60 meses).",
+    "terms": ["plazo", "selector", "meses"],
+    "applies": ["rule:plazos"],
+    "owner": "frontend",
+    "stability": "stable"
+  },
+  {
+    "id": "component:CreditCalculator",
+    "type": "component",
+    "name": "CreditCalculator",
+    "path": "src/features/credits/components/CreditCalculator.tsx",
+    "body": "Calculadora interactiva del costo total del crédito. Combina monto, plazo y tasa, calcula tabla de amortización sobre base 360. Para uso en el wizard de simulación previo a la solicitud formal.",
+    "terms": ["calculadora", "amortización", "simulación"],
+    "applies": ["rule:tasa-interes", "decision:adr-0001"],
+    "depends_on": ["component:InterestRateInput", "component:LoanTermSelector"],
+    "owner": "frontend",
+    "stability": "stable"
+  }
+]
