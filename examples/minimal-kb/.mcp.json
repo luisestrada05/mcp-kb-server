@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "kb": {
+      "command": "kb-mcp",
+      "env": {
+        "KB_DB_PATH": "./kb.db"
+      }
+    }
+  }
+}

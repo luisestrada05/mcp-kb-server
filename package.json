@@ -1,0 +1,67 @@
+{
+  "name": "@kb/mcp-server",
+  "version": "0.1.0",
+  "description": "Generic MCP server exposing a SQLite knowledge graph (entities + edges + FTS) to AI agents. Domain-agnostic; per-project plugins drive ingestion.",
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "bin": {
+    "kb-mcp": "./dist/server/main.js",
+    "kb-ingest": "./dist/cli/main.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./plugin": {
+      "import": "./dist/cli/plugin.js",
+      "types": "./dist/cli/plugin.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "migrations",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src tests --ext .ts",
+    "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "verify": "npm run lint && npm run typecheck && npm run test",
+    "server": "node dist/server/main.js",
+    "ingest": "node dist/cli/main.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "better-sqlite3": "^11.3.0",
+    "commander": "^12.1.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/node": "^20.14.0",
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "eslint": "^8.57.0",
+    "prettier": "^3.3.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "sqlite",
+    "knowledge-graph",
+    "rag",
+    "ai-agents"
+  ],
+  "license": "MIT"
+}
