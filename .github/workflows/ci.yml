@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel older runs for the same ref so superseded pushes don't burn minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # 20 is the floor (engines.node in package.json). 22 catches forward-
+        # compat issues without committing to a default that excludes 20-LTS
+        # consumers.
+        node: ['20', '22']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: 'npm'
+
+      # better-sqlite3 is a native module — caching node_modules across runs
+      # avoids the ~30s rebuild on every push. The lockfile hash keys the
+      # cache; any dep change re-builds cleanly.
+      - name: Cache native build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.npm
+            node_modules/better-sqlite3/build
+          key: native-${{ runner.os }}-node${{ matrix.node }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            native-${{ runner.os }}-node${{ matrix.node }}-
+
+      - run: npm ci
+
+      - run: npm run lint
+        name: Lint
+
+      - run: npm run typecheck
+        name: Type check
+
+      - run: npm test
+        name: Tests
+        timeout-minutes: 5
+
+      - run: npm run build
+        name: Build
+
+      # Smoke test: run the example plugin via the actual CLI binary so a
+      # regression in bin packaging or migration loading fails CI, not prod.
+      - name: Smoke test (example end-to-end)
+        run: |
+          npm link
+          mkdir -p /tmp/kb-smoke
+          cp -r examples/minimal-kb/* /tmp/kb-smoke/
+          cd /tmp/kb-smoke
+          kb-ingest init --db ./kb.db
+          kb-ingest ingest --db ./kb.db --plugin ./ingest.mjs
+          kb-ingest status --db ./kb.db | grep -q '"total": 3'
+          kb-ingest query term diferidos --db ./kb.db | grep -q 'rule:diferidos'
