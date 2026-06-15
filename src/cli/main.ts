@@ -12,6 +12,7 @@ import { EntityRepo } from '../repos/EntityRepo.js'
 import { EdgeRepo } from '../repos/EdgeRepo.js'
 import { SearchRepo } from '../repos/SearchRepo.js'
 import { runIngest } from './runIngest.js'
+import { validateRulesFile } from './validate.js'
 
 const program = new Command()
   .name('kb-ingest')
@@ -169,6 +170,41 @@ query
       process.stdout.write(JSON.stringify({ id, ...r }, null, 2) + '\n')
     } finally {
       db.close()
+    }
+  })
+
+program
+  .command('validate')
+  .description('Validate a rules YAML file against the KB (checks references to tables/SPs).')
+  .requiredOption('--db <path>', 'Path to the SQLite file.')
+  .requiredOption('--file <path>', 'Path to the rules YAML file to validate.')
+  .option('--auto-register', 'Auto-register missing objects without prompting.', false)
+  .action(async (opts: { db: string; file: string; autoRegister: boolean }) => {
+    const result = await validateRulesFile({
+      dbPath: opts.db,
+      filePath: opts.file,
+      autoRegister: opts.autoRegister,
+    })
+
+    // Print report
+    if (result.warnings.length > 0) {
+      process.stderr.write(`\n⚠️  Warnings (${result.warnings.length}):\n`)
+      for (const w of result.warnings) process.stderr.write(`  - ${w}\n`)
+    }
+
+    if (result.errors.length > 0) {
+      process.stderr.write(`\n❌ Errors (${result.errors.length}):\n`)
+      for (const e of result.errors) process.stderr.write(`  - ${e}\n`)
+    }
+
+    process.stderr.write(`\n📊 Stats: ${result.stats.totalRules} rules | domain: ${result.stats.domain}`)
+    process.stderr.write(` | registered: ${result.stats.newObjectsRegistered} | rejected: ${result.stats.referencesRejected}\n`)
+
+    if (result.valid) {
+      process.stderr.write('\n✅ Validación exitosa — el archivo puede ser ingestado.\n')
+    } else {
+      process.stderr.write('\n🚫 Validación fallida — corregir errores antes de ingestar.\n')
+      process.exit(1)
     }
   })
 

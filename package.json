@@ -8,6 +8,7 @@
   },
   "bin": {
     "kb-mcp": "./dist/server/main.js",
+    "kb-mcp-http": "./dist/server/http.js",
     "kb-ingest": "./dist/cli/main.js"
   },
   "main": "./dist/index.js",
@@ -37,16 +38,20 @@
     "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
     "verify": "npm run lint && npm run typecheck && npm run test",
     "server": "node dist/server/main.js",
+    "server:http": "node dist/server/http.js",
     "ingest": "node dist/cli/main.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
     "better-sqlite3": "^11.3.0",
     "commander": "^12.1.0",
+    "js-yaml": "^4.2.0",
     "zod": "^3.23.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.0",
+    "@types/express": "^5.0.6",
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^20.14.0",
     "@typescript-eslint/eslint-plugin": "^7.18.0",
     "@typescript-eslint/parser": "^7.18.0",
