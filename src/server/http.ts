@@ -63,6 +63,14 @@ const app = createMcpExpressApp()
 // Active transports keyed by session ID
 const transports: Record<string, StreamableHTTPServerTransport> = {}
 
+// GET /health — liveness probe for container orchestrators. Intentionally
+// trivial: confirms the process is up and the HTTP listener is responsive.
+// A "deep" check that hits the DB would couple liveness to readiness and
+// cause restart loops on transient SQLite contention.
+app.get('/health', (_req: Request, res: Response) => {
+  res.json({ status: 'ok' })
+})
+
 // POST /mcp — handles JSON-RPC requests (init + tool calls)
 app.post('/mcp', async (req: Request, res: Response) => {
   const sessionId = req.headers['mcp-session-id'] as string | undefined

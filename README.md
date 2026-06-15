@@ -194,6 +194,60 @@ Verás:
 | `KB_PORT` | No | Puerto HTTP (default: `3001`) |
 | `KB_MIGRATIONS_DIR` | No | Override del directorio de migraciones |
 
+### Despliegue con Docker (recomendado para el equipo)
+
+La imagen oficial se publica en GHCR en cada push a `main` (`:main`) y en cada tag `vX.Y.Z` (`:1.2.3`, `:1.2`, `:latest`).
+
+**1. Autenticación (una sola vez por dev):**
+
+La imagen es **privada**. Cada miembro del equipo necesita un Personal Access Token con scope `read:packages` y un login:
+
+```bash
+echo $GH_PAT | docker login ghcr.io -u <github-username> --password-stdin
+```
+
+**2. Despliegue con `docker-compose`:**
+
+Copia [`docker-compose.example.yml`](docker-compose.example.yml) a `docker-compose.yml`, ajusta el path del volumen y levanta:
+
+```bash
+mkdir -p ./data
+docker compose pull
+docker compose up -d
+docker compose logs -f kb-mcp
+```
+
+El healthcheck (`GET /health`) confirma que el server está vivo:
+
+```bash
+curl http://localhost:3001/health
+# {"status":"ok"}
+```
+
+**3. Poblar el volumen (ingesta):**
+
+La imagen incluye también el CLI `kb-ingest`. La ingesta corre dentro del container contra el mismo volumen `/data`:
+
+```bash
+# Asumiendo que tu plugin vive en ./plugins/ingest.mjs
+docker run --rm \
+  -v $(pwd)/data:/data \
+  -v $(pwd)/plugins:/plugins:ro \
+  --entrypoint node \
+  ghcr.io/luisestrada05/mcp-kb-server:main \
+  dist/cli/main.js ingest --db /data/kb.db --plugin /plugins/ingest.mjs
+```
+
+Re-ingestar es idempotente: relanzá el comando cada vez que cambien los YAMLs (manual, hook de pre-commit, o cron).
+
+**4. Configurar a los devs:**
+
+Sus `.mcp.json` apuntan al server desplegado:
+
+```json
+{ "mcpServers": { "kb": { "url": "http://<host>:3001/mcp" } } }
+```
+
 ---
 
 ## Ingestion plugin contract

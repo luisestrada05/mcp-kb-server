@@ -1,0 +1,40 @@
+# Keep the build context tiny. Anything reachable here is sent to the
+# Docker daemon on every build — node_modules alone is ~300MB.
+
+node_modules
+dist
+coverage
+
+# SQLite artifacts — runtime state, never in an image.
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Tests + dev tooling. Image is runtime-only.
+tests
+vitest.config.ts
+tsconfig.test.json
+.eslintrc.cjs
+.prettierrc.json
+
+# VCS + CI + editors
+.git
+.github
+.gitignore
+.vscode
+.idea
+.DS_Store
+
+# Docs + examples — not needed at runtime
+README.md
+LICENSE
+examples
+Dockerfile
+docker-compose.example.yml
+.dockerignore
+
+# Local env files
+.env
+.env.local
+*.log
