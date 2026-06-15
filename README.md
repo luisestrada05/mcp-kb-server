@@ -138,6 +138,64 @@ Writes are off by default — set `KB_ALLOW_WRITES=1` in the server env to enabl
 
 ---
 
+## Servidor HTTP centralizado (modo multi-usuario)
+
+Además del modo stdio (1 proceso por dev), el server puede correr en **modo HTTP** para que todo el equipo comparta la misma KB en tiempo real.
+
+### Encender el server
+
+```bash
+cd /Users/luis.estrada/Documents/banregio/mcp-kb-server
+nvm use 20
+KB_DB_PATH="$(pwd)/kb.db" KB_ALLOW_WRITES=1 node dist/server/http.js
+```
+
+Verás:
+```
+[kb-mcp-http] listening on http://0.0.0.0:3001/mcp  (writes ON)
+```
+
+> **Tip:** Para dejarlo corriendo en background usa `pm2`, `tmux`, o `nohup`:
+> ```bash
+> nohup env KB_DB_PATH="$(pwd)/kb.db" KB_ALLOW_WRITES=1 node dist/server/http.js > kb-server.log 2>&1 &
+> echo $! > kb-server.pid
+> ```
+
+### Apagar el server
+
+- Si corre en foreground: `Ctrl+C`
+- Si usaste nohup/background:
+  ```bash
+  kill $(cat kb-server.pid)
+  ```
+- Si usaste pm2:
+  ```bash
+  pm2 stop kb-mcp-http
+  ```
+
+### Configuración de cada dev (`.mcp.json`)
+
+```json
+{
+  "mcpServers": {
+    "kb": {
+      "url": "http://<IP_DEL_SERVER>:3001/mcp"
+    }
+  }
+}
+```
+
+### Variables de entorno
+
+| Variable | Requerida | Descripción |
+|---|---|---|
+| `KB_DB_PATH` | Sí | Ruta absoluta al archivo SQLite |
+| `KB_ALLOW_WRITES` | No | `1` para habilitar escrituras desde los agentes |
+| `KB_PORT` | No | Puerto HTTP (default: `3001`) |
+| `KB_MIGRATIONS_DIR` | No | Override del directorio de migraciones |
+
+---
+
 ## Ingestion plugin contract
 
 A plugin is an ESM (`.mjs` or compiled `.js`) module that default-exports:
