@@ -27,7 +27,7 @@ interface RuleEntry {
   id?: string
   type?: string
   summary?: string
-  applicability?: { evento?: string }
+  applicability?: { evento?: string[]; actor?: string[] }
   source_ref?: string
   owner?: string
   status?: string
@@ -64,7 +64,7 @@ const REQUIRED_FIELDS = ['id', 'type', 'summary', 'applicability', 'source_ref',
 /** Discover known domains from entity metadata in the DB. */
 function discoverDomains(db: Database): Set<string> {
   const rows = db.raw.prepare(
-    `SELECT DISTINCT json_extract(metadata, '$.domain') as domain FROM entities WHERE domain IS NOT NULL`
+    `SELECT DISTINCT json_extract(metadata, '$.domain') as domain FROM entities WHERE json_extract(metadata, '$.domain') IS NOT NULL`
   ).all() as { domain: string | null }[]
   return new Set(rows.map(r => r.domain).filter((d): d is string => !!d))
 }
@@ -89,8 +89,11 @@ function validateSchema(rule: RuleEntry, index: number): string[] {
     errors.push(`${label}: type "${rule.type}" no es válido (${[...VALID_TYPES].join(', ')})`)
   }
 
-  if (rule.applicability && !rule.applicability.evento) {
-    errors.push(`${label}: applicability.evento es obligatorio`)
+  if (rule.applicability) {
+    const evento = rule.applicability.evento
+    if (!Array.isArray(evento) || evento.length === 0) {
+      errors.push(`${label}: applicability.evento debe ser un array no vacío`)
+    }
   }
 
   if (!rule.risk_note) {
