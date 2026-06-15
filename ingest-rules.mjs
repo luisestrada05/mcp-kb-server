@@ -115,6 +115,8 @@ export default {
       }
 
       const domain = doc.metadata?.domain || basename(file, '.yaml').replace('seed-', '').replace('-rules', '')
+      const domainVersion = doc.metadata?.version || null
+      const domainCreatedAt = doc.metadata?.created_at || null
 
       for (const rule of doc.rules) {
         if (!rule.id) continue
@@ -130,6 +132,8 @@ export default {
           body,
           metadata: {
             domain,
+            domainVersion,
+            domainCreatedAt,
             subdomain: rule.subdomain || null,
             status: rule.status || 'active',
             owner: rule.owner || null,
@@ -139,12 +143,18 @@ export default {
             relatedTables: rule.related_objects?.tables || [],
             relatedSps: rule.related_objects?.sps || [],
             sourceRef: rule.source_ref || null,
+            // Structured formal_rule keeps conditions queryable via json_extract
+            // (e.g. WHERE json_extract(metadata, '$.formalRule.conditions[0].field') = 'validacion_previa').
+            // Without this they'd only be searchable via FTS on body.
+            formalRule: rule.formal_rule || null,
           },
           sourcePath: file,
         })
         totalRules++
 
-        // Add search terms
+        // Re-ingest must purge stale terms (e.g. a removed event no longer
+        // surfaces the rule via kb_by_term). addTerms alone is additive.
+        ctx.search.clearTerms(entityId)
         const terms = extractTerms(rule, domain)
         ctx.search.addTerms(entityId, terms)
 

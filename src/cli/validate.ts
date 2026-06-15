@@ -59,7 +59,17 @@ export interface ValidateOptions {
 
 const ID_PATTERN = /^(R|E|G|S)-[A-Z]{2,5}-\d{3,4}$/
 const VALID_TYPES = new Set(['rule', 'exception', 'gap', 'sla'])
+const VALID_STATUSES = new Set(['active', 'deprecated', 'draft'])
 const REQUIRED_FIELDS = ['id', 'type', 'summary', 'applicability', 'source_ref', 'owner', 'status']
+
+// ID prefix must match type — a rule R-* labelled type: exception is almost
+// always a copy-paste mistake. The spec ties the prefix to the type explicitly.
+const PREFIX_TO_TYPE: Record<string, string> = {
+  R: 'rule',
+  E: 'exception',
+  G: 'gap',
+  S: 'sla',
+}
 
 /** Discover known domains from entity metadata in the DB. */
 function discoverDomains(db: Database): Set<string> {
@@ -87,6 +97,22 @@ function validateSchema(rule: RuleEntry, index: number): string[] {
 
   if (rule.type && !VALID_TYPES.has(rule.type)) {
     errors.push(`${label}: type "${rule.type}" no es válido (${[...VALID_TYPES].join(', ')})`)
+  }
+
+  if (rule.id && rule.type && ID_PATTERN.test(rule.id)) {
+    const prefix = rule.id.charAt(0)
+    const expectedType = PREFIX_TO_TYPE[prefix]
+    if (expectedType && rule.type !== expectedType) {
+      errors.push(
+        `${label}: ID prefix "${prefix}-" implica type="${expectedType}" pero se declaró type="${rule.type}"`
+      )
+    }
+  }
+
+  if (rule.status && !VALID_STATUSES.has(rule.status)) {
+    errors.push(
+      `${label}: status "${rule.status}" no es válido (${[...VALID_STATUSES].join(', ')})`
+    )
   }
 
   if (rule.applicability) {
