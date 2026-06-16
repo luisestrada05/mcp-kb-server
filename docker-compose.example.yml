@@ -22,6 +22,21 @@
 #
 # Both images are private. Each operator needs a PAT with `read:packages`:
 #   echo $GH_PAT | docker login ghcr.io -u <github_user> --password-stdin
+#
+# ── Modo standalone (sin kb-content) ────────────────────────────────────────
+# Si querés probar el server con un kb.db armado a mano (no traído desde el
+# repo kb-content), aplicá estos tres cambios:
+#
+#   1. Borrá el servicio `kb-data-loader` entero.
+#   2. En `kb-mcp`, quitá el bloque `depends_on:` (líneas 65-67).
+#   3. Cambiá el volumen del `kb-mcp` por un bind mount al host:
+#        volumes:
+#          - ./data:/data         # ./data/kb.db debe existir antes del up
+#      y eliminá la sección `volumes:` al final del archivo (el volumen
+#      named ya no se usa).
+#
+# Útil para development local, pruebas one-off, o cuando el flujo de
+# kb-content todavía no está disponible.
 
 services:
   kb-data-loader:
