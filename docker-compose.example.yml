@@ -1,18 +1,46 @@
 # Example deployment for the team. Copy to docker-compose.yml in the
 # host where you'll run the centralized KB server.
 #
-# Flow:
-#   1. Pull the image: `docker login ghcr.io -u <github_user> -p <PAT>`
-#      where PAT has scope `read:packages`.
-#   2. Populate ./data/kb.db (see README "Populating the volume").
-#   3. `docker compose up -d`
-#   4. Team's .mcp.json points to http://<host>:3001/mcp
+# Architecture: two services share a named volume.
+#
+#   kb-data-loader   one-shot. Pulls ghcr.io/<owner>/kb-content (the
+#                    data image built by the kb-content repo's CI) and
+#                    copies its /kb.db onto the shared volume. Exits on
+#                    completion.
+#
+#   kb-mcp           the long-running HTTP server. Waits for the loader
+#                    to finish (depends_on.service_completed_successfully)
+#                    so it always starts against a populated DB.
+#
+# Refresh after a content change (PR merged in kb-content → new image
+# published in ~2 min):
+#
+#   docker compose pull
+#   docker compose up -d --force-recreate
+#
+# `--force-recreate` ensures the loader re-runs against the new image.
+#
+# Both images are private. Each operator needs a PAT with `read:packages`:
+#   echo $GH_PAT | docker login ghcr.io -u <github_user> --password-stdin
 
 services:
+  kb-data-loader:
+    # Pin to :main for rolling content, :1.2.3 for a versioned manifest.
+    image: ghcr.io/luisestrada05/kb-content:main
+
+    container_name: kb-data-loader
+
+    # One-shot — don't restart. If the loader fails, the server won't
+    # start (depends_on guards against booting against a stale DB).
+    restart: "no"
+
+    volumes:
+      - kb-data:/out
+
+    # CMD in the image already does `cp /kb.db /out/kb.db`. Override
+    # here only if your image diverges.
+
   kb-mcp:
-    # Pin to :main for the rolling build, or to :1.2.3 once you cut a
-    # versioned release. Avoid :latest in production — it makes rollbacks
-    # ambiguous.
     image: ghcr.io/luisestrada05/mcp-kb-server:main
 
     container_name: kb-mcp
@@ -23,8 +51,6 @@ services:
       - "3001:3001"
 
     environment:
-      # KB_DB_PATH defaults to /data/kb.db in the image — only override
-      # if you mount the volume somewhere else.
       KB_DB_PATH: /data/kb.db
       KB_PORT: 3001
       # Server is read-only by default. Set to "1" only if a curated
@@ -32,10 +58,13 @@ services:
       KB_ALLOW_WRITES: "0"
 
     volumes:
-      # The .db file lives outside the image so reingestion doesn't
-      # require an image rebuild. Replace ./data with a named volume or
-      # an absolute path in production.
-      - ./data:/data
+      # Same named volume as the loader. The loader populates it with
+      # kb.db before this service starts.
+      - kb-data:/data
+
+    depends_on:
+      kb-data-loader:
+        condition: service_completed_successfully
 
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:3001/health || exit 1"]
@@ -43,3 +72,8 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+volumes:
+  # Shared between loader and server. Docker manages its lifecycle —
+  # `docker volume rm <stack>_kb-data` to wipe and start fresh.
+  kb-data:

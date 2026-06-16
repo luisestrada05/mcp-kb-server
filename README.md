@@ -196,11 +196,22 @@ Verás:
 
 ### Despliegue con Docker (recomendado para el equipo)
 
-La imagen oficial se publica en GHCR en cada push a `main` (`:main`) y en cada tag `vX.Y.Z` (`:1.2.3`, `:1.2`, `:latest`).
+Arquitectura de dos imágenes que comparten un volumen:
+
+```
+ghcr.io/.../kb-content:main      ── one-shot init container
+   contiene: kb.db ya ingestado      copia /kb.db → volumen kb-data
+                                          │
+                                          ▼
+ghcr.io/.../mcp-kb-server:main   ── long-running HTTP server
+   lee el .db del volumen kb-data       expone :3001/mcp
+```
+
+La separación significa que el **contenido** vive en su propio repo (`kb-content`) con su propio CI; el **servidor** es genérico y reutilizable.
 
 **1. Autenticación (una sola vez por dev):**
 
-La imagen es **privada**. Cada miembro del equipo necesita un Personal Access Token con scope `read:packages` y un login:
+Ambas imágenes son privadas. Cada miembro del equipo necesita un Personal Access Token con scope `read:packages` y un login:
 
 ```bash
 echo $GH_PAT | docker login ghcr.io -u <github-username> --password-stdin
@@ -208,10 +219,9 @@ echo $GH_PAT | docker login ghcr.io -u <github-username> --password-stdin
 
 **2. Despliegue con `docker-compose`:**
 
-Copia [`docker-compose.example.yml`](docker-compose.example.yml) a `docker-compose.yml`, ajusta el path del volumen y levanta:
+Copia [`docker-compose.example.yml`](docker-compose.example.yml) a `docker-compose.yml` y levanta el stack:
 
 ```bash
-mkdir -p ./data
 docker compose pull
 docker compose up -d
 docker compose logs -f kb-mcp
@@ -224,21 +234,16 @@ curl http://localhost:3001/health
 # {"status":"ok"}
 ```
 
-**3. Poblar el volumen (ingesta):**
+**3. Refrescar reglas:**
 
-La imagen incluye también el CLI `kb-ingest`. La ingesta corre dentro del container contra el mismo volumen `/data`:
+Cuando un PR mergea a `main` en `kb-content`, su CI publica una nueva `ghcr.io/.../kb-content:main`. En el host:
 
 ```bash
-# Asumiendo que tu plugin vive en ./plugins/ingest.mjs
-docker run --rm \
-  -v $(pwd)/data:/data \
-  -v $(pwd)/plugins:/plugins:ro \
-  --entrypoint node \
-  ghcr.io/luisestrada05/mcp-kb-server:main \
-  dist/cli/main.js ingest --db /data/kb.db --plugin /plugins/ingest.mjs
+docker compose pull
+docker compose up -d --force-recreate
 ```
 
-Re-ingestar es idempotente: relanzá el comando cada vez que cambien los YAMLs (manual, hook de pre-commit, o cron).
+`--force-recreate` hace que el init-container (`kb-data-loader`) corra de nuevo y publique el `.db` fresco al volumen antes de que el server reinicie.
 
 **4. Configurar a los devs:**
 
@@ -247,6 +252,8 @@ Sus `.mcp.json` apuntan al server desplegado:
 ```json
 { "mcpServers": { "kb": { "url": "http://<host>:3001/mcp" } } }
 ```
+
+> **Modo standalone (sin `kb-content`):** si querés probar el server con un `.db` armado a mano, podés bind-mountar un directorio local en lugar del volumen y omitir el servicio `kb-data-loader`. Ver comentarios en `docker-compose.example.yml`.
 
 ---
 
