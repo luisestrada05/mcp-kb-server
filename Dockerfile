@@ -21,12 +21,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       python3 make g++ \
     && rm -rf /var/lib/apt/lists/*
 
-# Cache deps separately from source. The lockfile is the cache key.
-COPY package.json package-lock.json ./
+# Copy everything tsc needs BEFORE `npm ci`. Reason: package.json declares
+# `prepare: npm run build`, which npm runs automatically as part of `npm ci`.
+# Without tsconfig.json + src/ present, tsc fails to find a project. We
+# trade a smaller portion of the layer cache (a source change re-runs
+# `npm ci`) for a Dockerfile that's consistent with the prepare hook —
+# important because that hook is what lets downstream consumers (the
+# kb-content repo) install this package from a git URL.
+COPY package.json package-lock.json tsconfig.json ./
+COPY src ./src
 RUN npm ci
 
-COPY tsconfig.json ./
-COPY src ./src
+# Defensive re-run of build in case prepare was skipped (e.g. someone
+# adds --ignore-scripts later). Cheap, and keeps the explicit signal.
 RUN npm run build
 
 # Prune to production deps only. We copy this node_modules into the
