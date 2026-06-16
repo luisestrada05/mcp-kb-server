@@ -20,10 +20,13 @@ export function registerTraverseTool(server: McpServer, edges: EdgeRepo): void {
     {
       title: 'Graph walk from a starting entity',
       description:
-        'BFS from `id` following outgoing edges, optionally filtered by `relation`. ' +
+        'BFS from `id` following OUTGOING edges only, optionally filtered by `relation`. ' +
         'Returns the start node (depth 0) plus every reachable entity up to `maxDepth` (default 1). ' +
         'Each result has { entity, depth, relation } — relation is null for the start node. ' +
-        'Cycles are de-duplicated.',
+        'Cycles are de-duplicated. ' +
+        'Does NOT follow incoming edges: entities that point AT `id` (e.g. an exception that ' +
+        'overrides a rule, a decision that drove it) will not appear. To surface incoming ' +
+        'edges — typically what you need before acting on a rule — call kb_related instead.',
       inputSchema: {
         id: z.string().min(1).describe('Starting entity ID.'),
         relation: z
