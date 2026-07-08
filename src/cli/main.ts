@@ -176,14 +176,24 @@ query
 program
   .command('validate')
   .description('Validate a rules YAML file against the KB (checks references to tables/SPs).')
-  .requiredOption('--db <path>', 'Path to the SQLite file.')
+  .option('--db <path>', 'Path to the SQLite file. Required unless --schema-only.')
   .requiredOption('--file <path>', 'Path to the rules YAML file to validate.')
   .option('--auto-register', 'Auto-register missing objects without prompting.', false)
-  .action(async (opts: { db: string; file: string; autoRegister: boolean }) => {
+  .option(
+    '--schema-only',
+    'Skip DB reference checks (schema + formal_rule only). Intended for pre-commit hooks.',
+    false
+  )
+  .action(async (opts: { db?: string; file: string; autoRegister: boolean; schemaOnly: boolean }) => {
+    if (!opts.schemaOnly && !opts.db) {
+      process.stderr.write('❌ --db es obligatorio salvo cuando se usa --schema-only.\n')
+      process.exit(2)
+    }
     const result = await validateRulesFile({
       dbPath: opts.db,
       filePath: opts.file,
       autoRegister: opts.autoRegister,
+      schemaOnly: opts.schemaOnly,
     })
 
     // Print report

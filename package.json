@@ -40,7 +40,8 @@
     "verify": "npm run lint && npm run typecheck && npm run test",
     "server": "node dist/server/main.js",
     "server:http": "node dist/server/http.js",
-    "ingest": "node dist/cli/main.js"
+    "ingest": "node dist/cli/main.js",
+    "prepare": "git config core.hooksPath .githooks 2>/dev/null || true"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
@@ -58,6 +59,7 @@
     "@typescript-eslint/parser": "^7.18.0",
     "eslint": "^8.57.0",
     "prettier": "^3.3.0",
+    "tsx": "^4.23.0",
     "typescript": "^5.5.0",
     "vitest": "^2.0.0"
   },

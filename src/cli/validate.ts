@@ -61,9 +61,16 @@ interface ValidateResult {
 }
 
 export interface ValidateOptions {
-  dbPath: string
+  /** Path to the SQLite KB. Required unless `schemaOnly` is true. */
+  dbPath?: string
   filePath: string
   autoRegister?: boolean
+  /**
+   * Skip everything that needs the DB: reference checks against `table:*`/`sp:*`
+   * entities and domain discovery. Intended for pre-commit hooks that can run
+   * on a fresh clone without a KB built.
+   */
+  schemaOnly?: boolean
   /** Optional list of known domains. If omitted, discovers them from DB metadata. */
   knownDomains?: string[]
 }
@@ -311,17 +318,25 @@ async function handleMissing(
 // ── Main export ─────────────────────────────────────────────────────────────
 
 export async function validateRulesFile(opts: ValidateOptions): Promise<ValidateResult> {
-  const { dbPath, filePath, autoRegister = false, knownDomains } = opts
+  const { dbPath, filePath, autoRegister = false, schemaOnly = false, knownDomains } = opts
 
-  const db = new Database({ path: dbPath })
-  runMigrations(db)
-  const entityRepo = new EntityRepo(db)
-  const searchRepo = new SearchRepo(db)
+  if (!schemaOnly && !dbPath) {
+    throw new Error('validateRulesFile: dbPath is required unless schemaOnly is true')
+  }
 
-  // Build domain set: explicit list > discovered from DB
+  // schemaOnly runs without opening the DB — the pre-commit path can execute
+  // on a fresh clone with no KB built. Reference/domain checks are only
+  // available with a DB, so they're skipped in that mode.
+  const db = schemaOnly ? null : new Database({ path: dbPath! })
+  if (db) runMigrations(db)
+  const entityRepo = db ? new EntityRepo(db) : null
+  const searchRepo = db ? new SearchRepo(db) : null
+
   const validDomains = knownDomains
     ? new Set(knownDomains)
-    : discoverDomains(db)
+    : db
+    ? discoverDomains(db)
+    : new Set<string>()
 
   // Parse YAML
   const raw = readFileSync(filePath, 'utf-8')
@@ -329,13 +344,13 @@ export async function validateRulesFile(opts: ValidateOptions): Promise<Validate
   try {
     doc = yaml.load(raw) as RuleDoc
   } catch (err: unknown) {
-    db.close()
+    if (db) db.close()
     const msg = err instanceof Error ? err.message : String(err)
     return { valid: false, errors: [`Error parsing YAML: ${msg}`], warnings: [], stats: { totalRules: 0, domain: 'unknown', newObjectsRegistered: 0, referencesRejected: 0 } }
   }
 
   if (!doc || !doc.rules || !Array.isArray(doc.rules)) {
-    db.close()
+    if (db) db.close()
     return { valid: false, errors: ['El archivo no tiene un array "rules" válido'], warnings: [], stats: { totalRules: 0, domain: 'unknown', newObjectsRegistered: 0, referencesRejected: 0 } }
   }
 
@@ -370,13 +385,17 @@ export async function validateRulesFile(opts: ValidateOptions): Promise<Validate
     errors.push(...formal.errors)
     warnings.push(...formal.warnings)
 
-    if (rule.related_objects) {
-      const missing = validateReferences(rule, entityRepo)
+    if (schemaOnly) {
+      // Skip reference / handleMissing entirely. Schema-only cannot validate
+      // that referenced tables/SPs exist in the KB, so we don't emit the
+      // "no related_objects" warning either — it would be noise at commit time.
+    } else if (rule.related_objects) {
+      const missing = validateReferences(rule, entityRepo!)
       const hasMissing = missing.tables.length > 0 || missing.sps.length > 0
 
       if (hasMissing) {
         const { registered, rejected } = await handleMissing(
-          missing, rule, entityRepo, searchRepo, autoRegister, domain
+          missing, rule, entityRepo!, searchRepo!, autoRegister, domain
         )
         totalRegistered += registered.length
         totalRejected += rejected.length
@@ -390,7 +409,7 @@ export async function validateRulesFile(opts: ValidateOptions): Promise<Validate
     }
   }
 
-  db.close()
+  if (db) db.close()
 
   return {
     valid: errors.length === 0,

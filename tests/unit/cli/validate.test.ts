@@ -290,6 +290,80 @@ rules:
     expect(result.warnings.some((w) => w.includes('no es verificable automáticamente'))).toBe(true)
   })
 
+  it('schemaOnly mode: catches formal_rule errors without touching the DB', async () => {
+    const file = writeYaml(`
+metadata:
+  domain: diferidos
+  version: "1.0.0"
+  created_at: "2026-06-15"
+rules:
+  - id: R-DIF-200
+    type: rule
+    summary: op inválido
+    applicability:
+      evento: [alta]
+    source_ref: page
+    owner: team
+    status: active
+    risk_note: nota
+    formal_rule:
+      action: aprobar
+      conditions:
+        - field: saldo
+          op: equals
+          value: 0
+`)
+    // dbPath deliberately omitted — schemaOnly must not need it.
+    const result = await validateRulesFile({ filePath: file, schemaOnly: true })
+    expect(result.valid).toBe(false)
+    expect(result.errors.some((e) => e.includes('op "equals" no es válido'))).toBe(true)
+  })
+
+  it('schemaOnly mode: accepts a well-formed rule even when related_objects references unknown tables/sps', async () => {
+    const file = writeYaml(`
+metadata:
+  domain: diferidos
+  version: "1.0.0"
+  created_at: "2026-06-15"
+rules:
+  - id: R-DIF-201
+    type: rule
+    summary: bien formada, referencias sin verificar
+    applicability:
+      evento: [alta]
+    source_ref: page
+    owner: team
+    status: active
+    risk_note: nota
+    formal_rule:
+      action: aprobar
+      conditions:
+        - field: saldo
+          op: gte
+          value: 0
+    related_objects:
+      tables: [tabla_que_no_existe]
+      sps: [sp_que_no_existe]
+`)
+    const result = await validateRulesFile({ filePath: file, schemaOnly: true })
+    expect(result.valid).toBe(true)
+    // schemaOnly should not emit the "no related_objects" warning either.
+    expect(result.warnings.every((w) => !w.includes('related_objects'))).toBe(true)
+  })
+
+  it('schemaOnly mode: rejects call without dbPath only when not in schemaOnly', async () => {
+    const file = writeYaml(`
+metadata:
+  domain: diferidos
+  version: "1.0.0"
+  created_at: "2026-06-15"
+rules: []
+`)
+    await expect(
+      validateRulesFile({ filePath: file } as never)
+    ).rejects.toThrow(/dbPath is required/)
+  })
+
   it('accepts an exception that omits conditions (inherits from base)', async () => {
     const file = writeYaml(`
 metadata:

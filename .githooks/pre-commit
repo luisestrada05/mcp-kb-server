@@ -1,0 +1,42 @@
+#!/bin/sh
+# Pre-commit: validates staged rule YAMLs (schema + formal_rule) via kb-ingest.
+#
+# We use --schema-only so no built KB is needed — a fresh clone can commit rules
+# after `npm install`. Reference checks against the KB happen later in CI.
+#
+# To bypass in an emergency: `git commit --no-verify` (discouraged).
+
+set -e
+
+# Collect staged YAML files under any rules/ directory (top-level or nested).
+files=$(git diff --cached --name-only --diff-filter=ACM | grep -E '(^|/)rules/.*\.ya?ml$' || true)
+
+if [ -z "$files" ]; then
+  exit 0
+fi
+
+echo "▶ pre-commit: validando reglas modificadas (schema-only)..."
+
+# tsx is added as a devDep so no build step is required. If tsx isn't installed
+# yet the dev hasn't run `npm install` — bail with a clear message.
+if [ ! -x node_modules/.bin/tsx ]; then
+  echo "❌ node_modules/.bin/tsx no encontrado. Corre 'npm install' primero."
+  exit 1
+fi
+
+failed=0
+for f in $files; do
+  if ! node_modules/.bin/tsx src/cli/main.ts validate --schema-only --file "$f"; then
+    failed=1
+  fi
+done
+
+if [ "$failed" -ne 0 ]; then
+  echo ""
+  echo "❌ Al menos una regla no pasó la validación de schema."
+  echo "   Corrige los errores arriba antes de commitear."
+  echo "   (bypass de emergencia: 'git commit --no-verify' — evítalo)"
+  exit 1
+fi
+
+echo "✅ Reglas OK."
