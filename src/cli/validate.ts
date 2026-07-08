@@ -23,6 +23,18 @@ interface RuleDoc {
   rules?: RuleEntry[]
 }
 
+interface FormalRuleCondition {
+  field?: unknown
+  op?: unknown
+  value?: unknown
+}
+
+interface FormalRule {
+  action?: unknown
+  conditions?: unknown
+  overrides?: unknown
+}
+
 interface RuleEntry {
   id?: string
   type?: string
@@ -33,6 +45,7 @@ interface RuleEntry {
   status?: string
   risk_note?: string
   related_objects?: { tables?: string[]; sps?: string[] }
+  formal_rule?: FormalRule
 }
 
 interface ValidateResult {
@@ -61,6 +74,15 @@ const ID_PATTERN = /^(R|E|G|S)-[A-Z]{2,5}-\d{3,4}$/
 const VALID_TYPES = new Set(['rule', 'exception', 'gap', 'sla'])
 const VALID_STATUSES = new Set(['active', 'deprecated', 'draft'])
 const REQUIRED_FIELDS = ['id', 'type', 'summary', 'applicability', 'source_ref', 'owner', 'status']
+// Starter operator set for formal_rule.conditions[].op. Extend as new comparison
+// styles show up in rule YAMLs (e.g. "between", "regex"). Enforcing an enum
+// catches typos ("equals" vs "eq") that would silently pass otherwise.
+const VALID_OPS = new Set([
+  'eq', 'neq', 'gt', 'gte', 'lt', 'lte',
+  'in', 'not_in',
+  'exists', 'not_exists',
+  'matches',
+])
 
 // ID prefix must match type — a rule R-* labelled type: exception is almost
 // always a copy-paste mistake. The spec ties the prefix to the type explicitly.
@@ -127,6 +149,59 @@ function validateSchema(rule: RuleEntry, index: number): string[] {
   }
 
   return errors
+}
+
+// ── Formal rule validation ──────────────────────────────────────────────────
+
+// formal_rule is what makes a rule auditable against code. Without action +
+// well-formed conditions there is nothing structured for a downstream auditor
+// (LLM or otherwise) to compare against the SP body.
+function validateFormalRule(rule: RuleEntry, index: number): { errors: string[]; warnings: string[] } {
+  const errors: string[] = []
+  const warnings: string[] = []
+  const label = rule.id || `rules[${index}]`
+  const fr = rule.formal_rule
+
+  if (!fr || typeof fr !== 'object') {
+    errors.push(`${label}: falta "formal_rule" — toda regla debe declarar su lógica (action + conditions)`)
+    return { errors, warnings }
+  }
+
+  if (typeof fr.action !== 'string' || fr.action.trim() === '') {
+    errors.push(`${label}: falta "formal_rule.action" (string no vacío)`)
+  }
+
+  if (fr.conditions === undefined) {
+    // Exceptions with `overrides` inherit the base rule's conditions, so it's
+    // legitimate for them to omit their own. For everything else, no conditions
+    // means the rule can't be auto-verified — warn but don't fail.
+    if (rule.type !== 'exception') {
+      warnings.push(`${label}: no tiene "formal_rule.conditions" — la regla no es verificable automáticamente`)
+    }
+  } else if (!Array.isArray(fr.conditions)) {
+    errors.push(`${label}: "formal_rule.conditions" debe ser un array`)
+  } else {
+    if (fr.conditions.length === 0 && rule.type !== 'exception') {
+      warnings.push(`${label}: "formal_rule.conditions" está vacío — la regla no es verificable automáticamente`)
+    }
+    for (let j = 0; j < fr.conditions.length; j++) {
+      const c = fr.conditions[j] as FormalRuleCondition
+      const cLabel = `${label}.formal_rule.conditions[${j}]`
+      if (typeof c.field !== 'string' || c.field.trim() === '') {
+        errors.push(`${cLabel}: falta "field" (string no vacío)`)
+      }
+      if (typeof c.op !== 'string' || c.op.trim() === '') {
+        errors.push(`${cLabel}: falta "op" (string no vacío)`)
+      } else if (!VALID_OPS.has(c.op)) {
+        errors.push(`${cLabel}: op "${c.op}" no es válido (${[...VALID_OPS].join(', ')})`)
+      }
+      if (c.value === undefined) {
+        errors.push(`${cLabel}: falta "value"`)
+      }
+    }
+  }
+
+  return { errors, warnings }
 }
 
 // ── Reference validation ────────────────────────────────────────────────────
@@ -290,6 +365,10 @@ export async function validateRulesFile(opts: ValidateOptions): Promise<Validate
 
     const schemaErrors = validateSchema(rule, i)
     errors.push(...schemaErrors)
+
+    const formal = validateFormalRule(rule, i)
+    errors.push(...formal.errors)
+    warnings.push(...formal.warnings)
 
     if (rule.related_objects) {
       const missing = validateReferences(rule, entityRepo)
