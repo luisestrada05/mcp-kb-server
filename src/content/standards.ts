@@ -45,7 +45,8 @@ export interface StandardFile {
   standards: Standard[]
 }
 
-function findYamlFiles(dir: string): string[] {
+/** Recursive `.yaml`/`.yml` listing. Skips entries starting with `_` or `.` (templates). */
+export function findYamlFiles(dir: string): string[] {
   let entries: string[]
   try {
     entries = readdirSync(dir)
