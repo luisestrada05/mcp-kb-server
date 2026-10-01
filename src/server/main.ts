@@ -6,6 +6,8 @@
  *   KB_DB_PATH         (required) absolute path to the SQLite file
  *   KB_ALLOW_WRITES    (optional) "1" to enable kb_add_entity / kb_add_edge
  *   KB_MIGRATIONS_DIR  (optional) override the bundled migrations dir
+ *   KB_INSTRUCTIONS_FILE (optional) markdown sent to clients as the server's
+ *                      `instructions` — when and how agents should consult the KB
  *
  * Consumers wire this into `.mcp.json` like:
  *
@@ -26,6 +28,7 @@ import { EntityRepo } from '../repos/EntityRepo.js'
 import { EdgeRepo } from '../repos/EdgeRepo.js'
 import { SearchRepo } from '../repos/SearchRepo.js'
 import { registerTools } from './registerTools.js'
+import { loadInstructions } from './instructions.js'
 
 async function main(): Promise<void> {
   const dbPath = process.env.KB_DB_PATH
@@ -47,10 +50,10 @@ async function main(): Promise<void> {
     search: new SearchRepo(db),
   }
 
-  const server = new McpServer({
-    name: '@kb/mcp-server',
-    version: '0.1.0',
-  })
+  const server = new McpServer(
+    { name: '@kb/mcp-server', version: '0.1.0' },
+    { instructions: loadInstructions() }
+  )
 
   registerTools(server, repos, { allowWrites })
 

@@ -10,6 +10,8 @@
  *   KB_DB_PATH         (required) absolute path to the SQLite file
  *   KB_ALLOW_WRITES    (optional) "1" to enable kb_add_entity / kb_add_edge
  *   KB_MIGRATIONS_DIR  (optional) override the bundled migrations dir
+ *   KB_INSTRUCTIONS_FILE (optional) markdown sent to clients as the server's
+ *                      `instructions` — when and how agents should consult the KB
  *   KB_PORT            (optional) HTTP port, defaults to 3001
  */
 import { randomUUID } from 'node:crypto'
@@ -24,6 +26,7 @@ import { EntityRepo } from '../repos/EntityRepo.js'
 import { EdgeRepo } from '../repos/EdgeRepo.js'
 import { SearchRepo } from '../repos/SearchRepo.js'
 import { registerTools } from './registerTools.js'
+import { loadInstructions } from './instructions.js'
 
 // ── config ──────────────────────────────────────────────────────────────────
 const dbPath = process.env.KB_DB_PATH
@@ -36,6 +39,7 @@ if (!dbPath) {
 
 const allowWrites = process.env.KB_ALLOW_WRITES === '1'
 const port = parseInt(process.env.KB_PORT ?? '3001', 10)
+const instructions = loadInstructions()
 
 // ── database (shared across all sessions) ───────────────────────────────────
 const db = new Database({ path: dbPath })
@@ -49,10 +53,7 @@ const repos = {
 
 // ── per-session MCP server factory ──────────────────────────────────────────
 function createSessionServer(): McpServer {
-  const server = new McpServer({
-    name: '@kb/mcp-server',
-    version: '0.1.0',
-  })
+  const server = new McpServer({ name: '@kb/mcp-server', version: '0.1.0' }, { instructions })
   registerTools(server, repos, { allowWrites })
   return server
 }
