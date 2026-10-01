@@ -27,6 +27,7 @@ lessons:
       detalle: test_the_repo_has_a_single_head
     evidencia: [T-0022, AUR-915]
     reglas: [R-OPS-001]
+    terminos: [Alembic]
     codigo: ["tests/meta/test_pld_block_migration_chain.py::test_the_repo_has_a_single_head"]
     status: active
 `
@@ -115,6 +116,7 @@ lessons:
         'lesson:L-OPS-001',
       ])
       expect(ctx.search.byTerm('aur-915').map((h) => h.id)).toEqual(['lesson:L-OPS-001'])
+      expect(ctx.search.byTerm('alembic').map((h) => h.id)).toEqual(['lesson:L-OPS-001'])
       expect(logs).toContain('WARN: lesson:L-OPS-001 apunta a rule:R-OPS-001, que no está en la KB')
       expect(ctx.edges.outgoing('lesson:L-OPS-001').map((e) => e.relation)).toEqual([
         'involves_code',

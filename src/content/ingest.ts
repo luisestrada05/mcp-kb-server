@@ -359,6 +359,7 @@ export function ingestLessonFiles(
       const terms = new Set<string>(['leccion', lesson.id.toLowerCase()])
       if (area) terms.add(area.toLowerCase())
       for (const ev of lesson.evidencia ?? []) terms.add(ev.toLowerCase())
+      for (const t of lesson.terminos ?? []) terms.add(t.toLowerCase())
       for (const ref of lesson.codigo ?? []) for (const t of codeTerms(ref)) terms.add(t)
       for (const r of lesson.reglas ?? []) terms.add(r.toLowerCase())
       if (lesson.decision) terms.add(lesson.decision.toLowerCase())

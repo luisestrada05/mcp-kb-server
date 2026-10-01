@@ -44,6 +44,8 @@ export interface Lesson {
   reglas?: string[]
   /** `path::symbol` the lesson is about; surfaces it when that code is touched. */
   codigo?: string[]
+  /** Free search tags for words that appear in no path (e.g. "alembic", "migración"). */
+  terminos?: string[]
   status?: string
   [key: string]: unknown
 }
