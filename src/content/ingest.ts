@@ -1,12 +1,13 @@
 /**
- * Ingestion of a content repo's three sources into the graph: business rule
- * YAMLs, decision notes and technical standards. Each business's plugin only
- * supplies its conventions (where the notes live, how to summarize one) and
- * calls these.
+ * Ingestion of a content repo's sources into the graph: business rule YAMLs,
+ * decision notes, technical standards and lessons. Each business's plugin
+ * only supplies its conventions (where the notes live, how to summarize one)
+ * and calls these.
  *
- *   Entity types: rule | exception | gap | sla | decision | standard
+ *   Entity types: rule | exception | gap | sla | decision | standard | lesson
  *                 + table | stored_procedure | code  (objects a rule touches)
  *   Relations:    overrides | justified_by | uses_table | uses_sp | uses_code
+ *                 | resolved_by | concerns_rule | involves_code  (lessons)
  *
  * The point of embedding a decision's summary INTO the rule (body + metadata)
  * is that `kb_get rule:X` answers "why" and "what it does not mean" without
@@ -18,6 +19,7 @@ import yaml from 'js-yaml'
 import type { IngestionContext } from '../cli/plugin.js'
 import type { Note } from './notes.js'
 import type { StandardFile } from './standards.js'
+import type { LessonFile } from './lessons.js'
 
 /** What travels inside a rule or standard that cites a decision. */
 export interface DecisionSummary {
@@ -77,6 +79,20 @@ function buildRuleBody(rule: RuleEntry, why: DecisionSummary | null): string {
   return parts.join('\n')
 }
 
+/** `path/file.py::Symbol` → ["symbol", "file"], so lookups by either name hit. */
+function codeTerms(ref: string): string[] {
+  const [file, symbol] = ref.split('::')
+  const terms: string[] = []
+  if (symbol) terms.push(symbol.toLowerCase())
+  if (file)
+    terms.push(
+      basename(file)
+        .replace(/\.[^.]+$/, '')
+        .toLowerCase()
+    )
+  return terms
+}
+
 function ruleTerms(rule: RuleEntry, domain: string): string[] {
   const terms = new Set<string>([domain])
   if (rule.subdomain) terms.add(rule.subdomain)
@@ -86,14 +102,7 @@ function ruleTerms(rule: RuleEntry, domain: string): string[] {
   for (const t of rule.related_objects?.tables ?? []) terms.add(t.toLowerCase())
   for (const sp of rule.related_objects?.sps ?? []) terms.add(sp.toLowerCase())
   for (const ref of rule.related_objects?.code ?? []) {
-    const [file, symbol] = ref.split('::')
-    if (symbol) terms.add(symbol.toLowerCase())
-    if (file)
-      terms.add(
-        basename(file)
-          .replace(/\.[^.]+$/, '')
-          .toLowerCase()
-      )
+    for (const term of codeTerms(ref)) terms.add(term)
   }
   for (const word of (rule.summary ?? '').toLowerCase().split(/[\s—,;:()]+/)) {
     if (word.length > 4) terms.add(word)
@@ -288,4 +297,89 @@ export function ingestStandardFiles(
     }
   }
   return { standards, edges }
+}
+
+/**
+ * Lessons become `lesson:<id>` entities, findable by the code they involve,
+ * their evidence (tickets, tasks) and their area — so touching that code
+ * surfaces "this already broke".
+ *
+ * Run after rules and decisions: edges to them are only created when the
+ * target entity exists, since edges carry foreign keys.
+ */
+export function ingestLessonFiles(
+  ctx: IngestionContext,
+  files: LessonFile[]
+): { lessons: number; edges: number } {
+  let lessons = 0
+  let edges = 0
+  const linkIfExists = (src: string, dst: string, relation: string): void => {
+    if (!ctx.entities.getById(dst)) {
+      ctx.log(`WARN: ${src} apunta a ${dst}, que no está en la KB`)
+      return
+    }
+    ctx.edges.upsert({ src, dst, relation })
+    edges++
+  }
+
+  for (const { file, area, lessons: list } of files) {
+    for (const lesson of list) {
+      if (!lesson.id) continue
+      const entityId = `lesson:${lesson.id}`
+      const guard = lesson.guarda ?? {}
+      const parts = [lesson.titulo ?? '']
+      if (lesson.que_paso) parts.push(`Qué pasó: ${lesson.que_paso}`)
+      if (lesson.costo) parts.push(`Costo: ${lesson.costo}`)
+      if (lesson.causa_raiz) parts.push(`Causa raíz: ${lesson.causa_raiz}`)
+      if (lesson.no_hagas) parts.push(`No hagas: ${lesson.no_hagas}`)
+      if (lesson.haz_en_cambio) parts.push(`Haz en cambio: ${lesson.haz_en_cambio}`)
+      parts.push(`Guarda (${guard.estado ?? 'sin dato'}): ${guard.detalle ?? '—'}`)
+      if (lesson.evidencia?.length) parts.push(`Evidencia: ${lesson.evidencia.join(' · ')}`)
+
+      ctx.entities.upsert({
+        id: entityId,
+        type: 'lesson',
+        name: `[${lesson.id}] ${lesson.titulo ?? 'Sin título'}`,
+        body: parts.join('\n'),
+        metadata: {
+          area,
+          status: lesson.status ?? 'active',
+          guard: guard.estado ?? null,
+          guardDetail: guard.detalle ?? null,
+          cost: lesson.costo ?? null,
+          evidence: lesson.evidencia ?? [],
+          decision: lesson.decision ?? null,
+          rules: lesson.reglas ?? [],
+          code: lesson.codigo ?? [],
+        },
+        sourcePath: file,
+      })
+      lessons++
+
+      const terms = new Set<string>(['leccion', lesson.id.toLowerCase()])
+      if (area) terms.add(area.toLowerCase())
+      for (const ev of lesson.evidencia ?? []) terms.add(ev.toLowerCase())
+      for (const ref of lesson.codigo ?? []) for (const t of codeTerms(ref)) terms.add(t)
+      for (const r of lesson.reglas ?? []) terms.add(r.toLowerCase())
+      if (lesson.decision) terms.add(lesson.decision.toLowerCase())
+      ctx.search.clearTerms(entityId)
+      ctx.search.addTerms(entityId, [...terms])
+
+      if (lesson.decision) linkIfExists(entityId, `decision:${lesson.decision}`, 'resolved_by')
+      for (const r of lesson.reglas ?? []) linkIfExists(entityId, `rule:${r}`, 'concerns_rule')
+      for (const ref of lesson.codigo ?? []) {
+        const codeId = `code:${ref}`
+        ctx.entities.upsert({
+          id: codeId,
+          type: 'code',
+          name: ref,
+          body: `Código: ${ref}`,
+          metadata: { area },
+        })
+        ctx.edges.upsert({ src: entityId, dst: codeId, relation: 'involves_code' })
+        edges++
+      }
+    }
+  }
+  return { lessons, edges }
 }
