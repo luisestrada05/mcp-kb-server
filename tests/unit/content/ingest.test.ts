@@ -108,7 +108,13 @@ rules:
     expect(rule?.body).toContain('Por qué: El orden es una lista, no un algoritmo.')
     expect(rule?.body).toContain('No significa: Que el IVA vaya siempre antes que su principal')
     expect(rule?.body).toContain('No significa: Que el orden varíe por producto')
-    expect(rule?.metadata.decision).toMatchObject({ id: 'DEC-COB-001', status: 'accepted' })
+    // The why travels once, in the body; metadata only identifies the decision.
+    expect(rule?.metadata.decision).toEqual({
+      id: 'DEC-COB-001',
+      status: 'accepted',
+      validatedBy: null,
+    })
+    expect(ctx.entities.getById('decision:DEC-COB-001')?.metadata).not.toHaveProperty('sections')
 
     const out = ctx.edges.outgoing('rule:R-COB-001').map((e) => `${e.relation}→${e.dst}`)
     expect(out).toEqual(

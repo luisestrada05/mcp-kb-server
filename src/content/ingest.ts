@@ -79,6 +79,17 @@ function buildRuleBody(rule: RuleEntry, why: DecisionSummary | null): string {
   return parts.join('\n')
 }
 
+/**
+ * The decision as metadata carries only its identity: its why and its
+ * "No significa" are already in the body, and repeating them in metadata
+ * doubled what every `kb_get` cost in tokens.
+ */
+function decisionRef(
+  why: DecisionSummary | null
+): Pick<DecisionSummary, 'id' | 'status' | 'validatedBy'> | null {
+  return why ? { id: why.id, status: why.status, validatedBy: why.validatedBy } : null
+}
+
 /** `path/file.py::Symbol` → ["symbol", "file"], so lookups by either name hit. */
 function codeTerms(ref: string): string[] {
   const [file, symbol] = ref.split('::')
@@ -125,14 +136,8 @@ export function ingestDecisionNotes(
       type: 'decision',
       name: note.title.startsWith(summary.id) ? note.title : `[${summary.id}] ${note.title}`,
       body: note.content,
-      metadata: {
-        ...note.frontmatter,
-        domain,
-        summary,
-        sections: Object.fromEntries(
-          Object.values(note.sections).map((s) => [s.heading, s.items.length ? s.items : s.text])
-        ),
-      },
+      // Metadata stays short and structured: the body already carries the full text.
+      metadata: { ...note.frontmatter, domain },
       sourcePath: note.file,
     })
     ctx.search.clearTerms(entityId)
@@ -195,7 +200,6 @@ export function ingestRuleFiles(
           subdomain: rule.subdomain ?? null,
           status: rule.status ?? 'active',
           owner: rule.owner ?? null,
-          riskNote: rule.risk_note ?? null,
           eventos: rule.applicability?.evento ?? [],
           actors: rule.applicability?.actor ?? [],
           relatedTables: rule.related_objects?.tables ?? [],
@@ -203,8 +207,7 @@ export function ingestRuleFiles(
           relatedCode: rule.related_objects?.code ?? [],
           sourceRef: rule.source_ref ?? null,
           formalRule: rule.formal_rule ?? null,
-          noSignifica: rule.no_significa ?? [],
-          decision: why,
+          decision: decisionRef(why),
         },
         sourcePath: file,
       })
@@ -276,8 +279,7 @@ export function ingestStandardFiles(
           appliesTo: std.applies_to ?? [],
           status: std.status ?? 'active',
           owner: std.owner ?? null,
-          rationale: std.rationale ?? null,
-          decision: why,
+          decision: decisionRef(why),
         },
         sourcePath: file,
       })
@@ -345,8 +347,6 @@ export function ingestLessonFiles(
           area,
           status: lesson.status ?? 'active',
           guard: guard.estado ?? null,
-          guardDetail: guard.detalle ?? null,
-          cost: lesson.costo ?? null,
           evidence: lesson.evidencia ?? [],
           decision: lesson.decision ?? null,
           rules: lesson.reglas ?? [],
