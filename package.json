@@ -21,6 +21,10 @@
     "./plugin": {
       "import": "./dist/cli/plugin.js",
       "types": "./dist/cli/plugin.d.ts"
+    },
+    "./content": {
+      "import": "./dist/content/index.js",
+      "types": "./dist/content/index.d.ts"
     }
   },
   "files": [
