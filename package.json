@@ -21,6 +21,10 @@
     "./plugin": {
       "import": "./dist/cli/plugin.js",
       "types": "./dist/cli/plugin.d.ts"
+    },
+    "./content": {
+      "import": "./dist/content/index.js",
+      "types": "./dist/content/index.d.ts"
     }
   },
   "files": [
@@ -30,7 +34,6 @@
   ],
   "scripts": {
     "build": "tsc",
-    "prepare": "npm run build",
     "dev": "tsc --watch",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -41,7 +44,7 @@
     "server": "node dist/server/main.js",
     "server:http": "node dist/server/http.js",
     "ingest": "node dist/cli/main.js",
-    "prepare": "git config core.hooksPath .githooks 2>/dev/null || true"
+    "prepare": "npm run build && (git config core.hooksPath .githooks 2>/dev/null || true)"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

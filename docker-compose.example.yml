@@ -71,6 +71,10 @@ services:
       # Server is read-only by default. Set to "1" only if a curated
       # client is allowed to call kb_add_entity / kb_add_edge.
       KB_ALLOW_WRITES: "0"
+      # Agent guidance shipped by the data image next to kb.db. Remove this line
+      # if your content image does not publish mcp-instructions.md: a configured
+      # file that is missing stops the server at startup.
+      KB_INSTRUCTIONS_FILE: /data/mcp-instructions.md
 
     volumes:
       # Same named volume as the loader. The loader populates it with
