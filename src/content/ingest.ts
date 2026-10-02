@@ -90,18 +90,21 @@ function decisionRef(
   return why ? { id: why.id, status: why.status, validatedBy: why.validatedBy } : null
 }
 
-/** `path/file.py::Symbol` → ["symbol", "file"], so lookups by either name hit. */
+/**
+ * `path/file.py::Symbol` → ["symbol", "file", "file.py", "path/file.py",
+ * "path/file.py::symbol"], so a lookup by the symbol, the module, the file name
+ * or the path an agent is editing all hit.
+ */
 function codeTerms(ref: string): string[] {
   const [file, symbol] = ref.split('::')
   const terms: string[] = []
   if (symbol) terms.push(symbol.toLowerCase())
-  if (file)
-    terms.push(
-      basename(file)
-        .replace(/\.[^.]+$/, '')
-        .toLowerCase()
-    )
-  return terms
+  if (file) {
+    const name = basename(file).toLowerCase()
+    terms.push(name.replace(/\.[^.]+$/, ''), name, file.toLowerCase())
+  }
+  if (file && symbol) terms.push(`${file}::${symbol}`.toLowerCase())
+  return [...new Set(terms)]
 }
 
 function ruleTerms(rule: RuleEntry, domain: string): string[] {

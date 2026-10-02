@@ -12,6 +12,7 @@ import { readFileSync } from 'node:fs'
 import yaml from 'js-yaml'
 import type { CheckResult } from './notes.js'
 import { findYamlFiles } from './standards.js'
+import { stringListErrors } from './lists.js'
 
 export const LESSON_ID_PATTERN = /^L-[A-Z]{2,5}-\d{3,4}$/
 export const LESSON_STATUSES = ['active', 'obsolete'] as const
@@ -99,9 +100,10 @@ export function validateLessons(
           `${label}: status "${lesson.status}" no es válido (${LESSON_STATUSES.join(', ')})`
         )
       }
-      if (lesson.evidencia !== undefined && !Array.isArray(lesson.evidencia)) {
-        errors.push(`${label}: "evidencia" debe ser una lista`)
-      } else if (Array.isArray(lesson.evidencia) && lesson.evidencia.length === 0) {
+      for (const field of ['evidencia', 'reglas', 'codigo', 'terminos'] as const) {
+        errors.push(...stringListErrors(lesson[field], label, field))
+      }
+      if (Array.isArray(lesson.evidencia) && lesson.evidencia.length === 0) {
         errors.push(`${label}: "evidencia" está vacía — una lección sin evidencia es una opinión`)
       }
       const guard = lesson.guarda
