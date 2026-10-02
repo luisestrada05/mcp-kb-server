@@ -92,6 +92,23 @@ lessons:
     expect(all).toMatch(/L-OPS-002: cita ADR-404/)
   })
 
+  it('rejects list items that YAML did not read as text (an unquoted 422 is a number)', () => {
+    writeFileSync(
+      join(tmp, 'ops', 'migraciones.yaml'),
+      LESSON.replace('terminos: [Alembic]', 'terminos: [Alembic, 422, true]').replace(
+        'evidencia: [T-0022, AUR-915]',
+        'evidencia: T-0022'
+      )
+    )
+    const { errors } = validateLessons(loadLessons(tmp))
+    const label = `${join(tmp, 'ops', 'migraciones.yaml')}: L-OPS-001`
+    expect(errors).toEqual([
+      `${label}: "evidencia" debe ser una lista`,
+      `${label}: terminos[1] = 422 no es texto — ponlo entre comillas`,
+      `${label}: terminos[2] = true no es texto — ponlo entre comillas`,
+    ])
+  })
+
   it('ingests lessons findable by code symbol and ticket, linking only to existing rules', () => {
     writeFileSync(join(tmp, 'ops', 'migraciones.yaml'), LESSON)
     const db = new Database({ path: join(tmp, 'kb.db') })
@@ -117,6 +134,15 @@ lessons:
       ])
       expect(ctx.search.byTerm('aur-915').map((h) => h.id)).toEqual(['lesson:L-OPS-001'])
       expect(ctx.search.byTerm('alembic').map((h) => h.id)).toEqual(['lesson:L-OPS-001'])
+      // The file an agent is editing finds the lesson, by name or by path.
+      for (const term of [
+        'test_pld_block_migration_chain',
+        'test_pld_block_migration_chain.py',
+        'tests/meta/test_pld_block_migration_chain.py',
+        'tests/meta/test_pld_block_migration_chain.py::test_the_repo_has_a_single_head',
+      ]) {
+        expect(ctx.search.byTerm(term).map((h) => h.id), term).toEqual(['lesson:L-OPS-001'])
+      }
       expect(logs).toContain('WARN: lesson:L-OPS-001 apunta a rule:R-OPS-001, que no está en la KB')
       expect(ctx.edges.outgoing('lesson:L-OPS-001').map((e) => e.relation)).toEqual([
         'involves_code',

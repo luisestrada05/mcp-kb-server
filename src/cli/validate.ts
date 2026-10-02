@@ -15,6 +15,7 @@ import { Database } from '../db/Database.js'
 import { EntityRepo } from '../repos/EntityRepo.js'
 import { SearchRepo } from '../repos/SearchRepo.js'
 import { runMigrations } from '../db/migrations.js'
+import { stringListErrors } from '../content/lists.js'
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -44,7 +45,7 @@ interface RuleEntry {
   owner?: string
   status?: string
   risk_note?: string
-  related_objects?: { tables?: string[]; sps?: string[] }
+  related_objects?: { tables?: string[]; sps?: string[]; code?: string[] }
   formal_rule?: FormalRule
 }
 
@@ -153,6 +154,12 @@ function validateSchema(rule: RuleEntry, index: number): string[] {
 
   if (!rule.risk_note) {
     errors.push(`${label}: falta "risk_note" — toda regla debe documentar su riesgo`)
+  }
+
+  errors.push(...stringListErrors(rule.applicability?.evento, label, 'applicability.evento'))
+  errors.push(...stringListErrors(rule.applicability?.actor, label, 'applicability.actor'))
+  for (const key of ['tables', 'sps', 'code'] as const) {
+    errors.push(...stringListErrors(rule.related_objects?.[key], label, `related_objects.${key}`))
   }
 
   return errors
