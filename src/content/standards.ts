@@ -1,5 +1,6 @@
 /**
- * Technical standards per technology — `standards/<technology>/<topic>.yaml`.
+ * Technical standards — `standards/<layer>/<topic>.yaml` (or
+ * `standards/<technology>/<topic>.yaml` for repos that don't split by layer).
  *
  * Kept apart from business rules: a rule says what must happen in the
  * domain, a standard says how code is written in a technology. The format is
@@ -41,6 +42,8 @@ export interface Standard {
 export interface StandardFile {
   file: string
   technology: string | null
+  /** Layer the file applies to (e.g. bd, ms, web). Optional unless the repo declares its layers. */
+  layer: string | null
   version: string | null
   standards: Standard[]
 }
@@ -67,12 +70,13 @@ export function findYamlFiles(dir: string): string[] {
 export function loadStandards(dir: string): StandardFile[] {
   return findYamlFiles(dir).map((file) => {
     const doc = (yaml.load(readFileSync(file, 'utf-8')) ?? {}) as {
-      metadata?: { technology?: string; version?: string }
+      metadata?: { technology?: string; layer?: string; version?: string }
       standards?: unknown
     }
     return {
       file,
       technology: doc.metadata?.technology ?? null,
+      layer: doc.metadata?.layer ?? null,
       version: doc.metadata?.version ?? null,
       standards: Array.isArray(doc.standards) ? (doc.standards as Standard[]) : [],
     }
@@ -81,13 +85,14 @@ export function loadStandards(dir: string): StandardFile[] {
 
 export function validateStandards(
   files: StandardFile[],
-  opts: { knownDecisions?: Set<string> } = {}
+  opts: { knownDecisions?: Set<string>; layers?: readonly string[] } = {}
 ): CheckResult {
   const errors: string[] = []
   const seen = new Set<string>()
 
-  for (const { file, technology, standards } of files) {
+  for (const { file, technology, layer, standards } of files) {
     if (!technology) errors.push(`${file}: falta metadata.technology`)
+    errors.push(...layerErrors(layer, opts.layers, file))
     if (standards.length === 0) errors.push(`${file}: no tiene lista "standards"`)
     standards.forEach((std, i) => {
       const label = `${file}: ${std.id ?? `standards[${i}]`}`
@@ -115,4 +120,21 @@ export function validateStandards(
     })
   }
   return { errors, warnings: [] }
+}
+
+/**
+ * When a repo declares its layers, every file must name one of them; a repo
+ * that doesn't keeps `layer` optional and free.
+ */
+export function layerErrors(
+  layer: string | null | undefined,
+  layers: readonly string[] | undefined,
+  label: string
+): string[] {
+  if (!layers) return []
+  if (!layer) return [`${label}: falta metadata.layer (${layers.join(', ')})`]
+  if (!layers.includes(layer)) {
+    return [`${label}: layer "${layer}" no es válida (${layers.join(', ')})`]
+  }
+  return []
 }

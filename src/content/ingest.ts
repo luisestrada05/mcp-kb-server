@@ -5,9 +5,12 @@
  * and calls these.
  *
  *   Entity types: rule | exception | gap | sla | decision | standard | lesson
+ *                 | precedent | repo
  *                 + table | stored_procedure | code  (objects a rule touches)
  *   Relations:    overrides | justified_by | uses_table | uses_sp | uses_code
  *                 | resolved_by | concerns_rule | involves_code  (lessons)
+ *                 | located_in  (catalog: object → repo)
+ *                 | verified_in | applies_rule  (precedents)
  *
  * The point of embedding a decision's summary INTO the rule (body + metadata)
  * is that `kb_get rule:X` answers "why" and "what it does not mean" without
@@ -20,6 +23,8 @@ import type { IngestionContext } from '../cli/plugin.js'
 import type { Note } from './notes.js'
 import type { StandardFile } from './standards.js'
 import type { LessonFile } from './lessons.js'
+import type { CatalogFile } from './catalog.js'
+import type { PrecedentFile } from './precedents.js'
 
 /** What travels inside a rule or standard that cites a decision. */
 export interface DecisionSummary {
@@ -258,7 +263,7 @@ export function ingestStandardFiles(
 ): { standards: number; edges: number } {
   let standards = 0
   let edges = 0
-  for (const { file, technology, version, standards: list } of files) {
+  for (const { file, technology, layer, version, standards: list } of files) {
     for (const std of list) {
       if (!std.id) continue
       const entityId = `standard:${std.id}`
@@ -276,6 +281,7 @@ export function ingestStandardFiles(
         body: parts.join('\n'),
         metadata: {
           technology,
+          layer,
           technologyVersion: version,
           category: std.category ?? null,
           level: std.level ?? null,
@@ -291,7 +297,14 @@ export function ingestStandardFiles(
       ctx.search.clearTerms(entityId)
       ctx.search.addTerms(
         entityId,
-        [technology, std.category, std.id.toLowerCase(), 'estandar', ...(std.applies_to ?? [])]
+        [
+          technology,
+          layer,
+          std.category,
+          std.id.toLowerCase(),
+          'estandar',
+          ...(std.applies_to ?? []),
+        ]
           .filter((t): t is string => !!t)
           .map((t) => t.toLowerCase())
       )
@@ -386,4 +399,199 @@ export function ingestLessonFiles(
     }
   }
   return { lessons, edges }
+}
+
+const objectKinds: Record<string, { type: string; label: string }> = {
+  sp: { type: 'stored_procedure', label: 'Stored procedure' },
+  table: { type: 'table', label: 'Tabla' },
+  code: { type: 'code', label: 'Código' },
+}
+
+/** `sp:DIVVAL` → its entity shape when nothing has created it yet. */
+function objectEntity(objectId: string): { type: string; name: string; body: string } {
+  const sep = objectId.indexOf(':')
+  const prefix = objectId.slice(0, sep)
+  const name = objectId.slice(sep + 1)
+  const kind = objectKinds[prefix] ?? { type: prefix, label: prefix }
+  return { type: kind.type, name, body: `${kind.label}: ${name}` }
+}
+
+/** Search terms for an object id: `sp:DIVVAL` → ["divval", "sp:divval"]. */
+function objectTerms(objectId: string): string[] {
+  const name = objectId.slice(objectId.indexOf(':') + 1)
+  const terms = objectId.startsWith('code:') ? codeTerms(name) : [name.toLowerCase()]
+  return [...new Set([...terms, objectId.toLowerCase()])]
+}
+
+/**
+ * Repos become `repo:<id>` entities; each component adds its location (repo,
+ * path, layer) to the object's entity and a `located_in` edge, so
+ * `kb_get sp:DIVVAL` says where to go read it.
+ *
+ * Run after rules and lessons: they upsert the same object entities with
+ * their own metadata, which would drop the location.
+ */
+export function ingestCatalog(
+  ctx: IngestionContext,
+  files: CatalogFile[]
+): { repos: number; components: number; edges: number } {
+  let repos = 0
+  let components = 0
+  let edges = 0
+  const repoLayers = new Map<string, string | null>()
+
+  for (const { file, repos: list } of files) {
+    for (const repo of list) {
+      if (!repo.id) continue
+      const entityId = `repo:${repo.id}`
+      repoLayers.set(repo.id, repo.layer ?? null)
+      const parts = [`Repositorio ${repo.id}`]
+      if (repo.contiene) parts.push(`Contiene: ${repo.contiene}`)
+      if (repo.url) parts.push(`URL: ${repo.url}`)
+      ctx.entities.upsert({
+        id: entityId,
+        type: 'repo',
+        name: repo.id,
+        body: parts.join('\n'),
+        metadata: { layer: repo.layer ?? null, url: repo.url ?? null },
+        sourcePath: file,
+      })
+      ctx.search.clearTerms(entityId)
+      ctx.search.addTerms(
+        entityId,
+        ['repo', repo.id, repo.layer].filter((t): t is string => !!t).map((t) => t.toLowerCase())
+      )
+      repos++
+    }
+  }
+
+  for (const { file, layer, components: list } of files) {
+    for (const comp of list) {
+      if (!comp.objeto || !comp.repo || !comp.ruta) continue
+      const existing = ctx.entities.getById(comp.objeto)
+      const fresh = objectEntity(comp.objeto)
+      const location = {
+        repo: comp.repo,
+        path: comp.ruta,
+        layer: layer ?? repoLayers.get(comp.repo) ?? null,
+      }
+      const body = [existing?.body ?? fresh.body, `Ubicación: ${comp.repo}/${comp.ruta}`]
+      if (comp.descripcion) body.push(comp.descripcion)
+      ctx.entities.upsert({
+        id: comp.objeto,
+        type: existing?.type ?? fresh.type,
+        name: existing?.name ?? fresh.name,
+        body: body.join('\n'),
+        metadata: { ...(existing?.metadata ?? {}), location },
+        sourcePath: existing?.sourcePath ?? file,
+      })
+      components++
+      ctx.search.addTerms(comp.objeto, [...objectTerms(comp.objeto), ...codeTerms(comp.ruta)])
+      if (ctx.entities.getById(`repo:${comp.repo}`)) {
+        ctx.edges.upsert({ src: comp.objeto, dst: `repo:${comp.repo}`, relation: 'located_in' })
+        edges++
+      }
+    }
+  }
+  return { repos, components, edges }
+}
+
+/** Rule ids carry their kind in the entity id (`rule:`, `exception:`…); find the one that exists. */
+function findRuleEntity(ctx: IngestionContext, ruleId: string): string | null {
+  for (const kind of ['rule', 'exception', 'gap', 'sla']) {
+    if (ctx.entities.getById(`${kind}:${ruleId}`)) return `${kind}:${ruleId}`
+  }
+  return null
+}
+
+/**
+ * Precedents become `precedent:<id>` entities, findable by meaning (embedded
+ * like everything else), by the objects they touched and by their tickets.
+ *
+ * Run after rules, decisions and the catalog: edges to rules and decisions
+ * are only created when they exist, and objects a precedent was verified in
+ * are created only if nothing else created them.
+ */
+export function ingestPrecedentFiles(
+  ctx: IngestionContext,
+  files: PrecedentFile[]
+): { precedents: number; edges: number } {
+  let precedents = 0
+  let edges = 0
+
+  for (const { file, area, precedents: list } of files) {
+    for (const p of list) {
+      if (!p.id) continue
+      const entityId = `precedent:${p.id}`
+      const verified = p.verificado_en ?? []
+      const parts = [p.titulo ?? '']
+      if (p.que_se_pidio) parts.push(`Qué se pidió: ${p.que_se_pidio}`)
+      if (p.como_se_resolvio) parts.push(`Cómo se resolvió: ${p.como_se_resolvio}`)
+      parts.push(
+        p.traza === 'confirmada'
+          ? `Traza: confirmada en ${verified.join(', ')}`
+          : 'Traza: posible — sin confirmar en el código'
+      )
+      if (p.evidencia?.length) parts.push(`Evidencia: ${p.evidencia.join(' · ')}`)
+
+      ctx.entities.upsert({
+        id: entityId,
+        type: 'precedent',
+        name: `[${p.id}] ${p.titulo ?? 'Sin título'}`,
+        body: parts.join('\n'),
+        metadata: {
+          area,
+          layers: p.capas ?? [],
+          trace: p.traza ?? null,
+          verifiedIn: verified,
+          rules: p.reglas ?? [],
+          decision: p.decision ?? null,
+          evidence: p.evidencia ?? [],
+          date: p.fecha ?? null,
+          status: p.status ?? 'active',
+        },
+        sourcePath: file,
+      })
+      precedents++
+
+      const terms = new Set<string>(['precedente', p.id.toLowerCase()])
+      if (area) terms.add(area.toLowerCase())
+      for (const t of [...(p.capas ?? []), ...(p.evidencia ?? []), ...(p.terminos ?? [])]) {
+        terms.add(t.toLowerCase())
+      }
+      for (const r of p.reglas ?? []) terms.add(r.toLowerCase())
+      if (p.decision) terms.add(p.decision.toLowerCase())
+      for (const obj of verified) for (const t of objectTerms(obj)) terms.add(t)
+      ctx.search.clearTerms(entityId)
+      ctx.search.addTerms(entityId, [...terms])
+
+      if (p.decision) {
+        if (ctx.entities.getById(`decision:${p.decision}`)) {
+          ctx.edges.upsert({
+            src: entityId,
+            dst: `decision:${p.decision}`,
+            relation: 'resolved_by',
+          })
+          edges++
+        } else ctx.log(`WARN: ${entityId} apunta a decision:${p.decision}, que no está en la KB`)
+      }
+      for (const r of p.reglas ?? []) {
+        const ruleEntity = findRuleEntity(ctx, r)
+        if (!ruleEntity) {
+          ctx.log(`WARN: ${entityId} apunta a la regla ${r}, que no está en la KB`)
+          continue
+        }
+        ctx.edges.upsert({ src: entityId, dst: ruleEntity, relation: 'applies_rule' })
+        edges++
+      }
+      for (const obj of verified) {
+        if (!ctx.entities.getById(obj)) {
+          ctx.entities.upsert({ id: obj, ...objectEntity(obj), metadata: { area } })
+        }
+        ctx.edges.upsert({ src: entityId, dst: obj, relation: 'verified_in' })
+        edges++
+      }
+    }
+  }
+  return { precedents, edges }
 }
