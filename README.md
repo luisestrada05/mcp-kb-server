@@ -46,6 +46,7 @@ entities      (id PK, type, name, body, metadata JSON, source_path, updated_at)
 edges         (src, dst, relation, metadata JSON, PRIMARY KEY(src, dst, relation))
 terms         (term, entity_id, PRIMARY KEY(term, entity_id))
 entities_fts  (FTS5: name + body, BM25, kept in sync via triggers)
+embeddings    (entity_id PK, model, dims, content_hash, vector BLOB float32)   -- optional, see below
 ```
 
 `metadata` columns are SQLite JSON1, queryable via `json_extract` if you need richer filters than entity type.
@@ -118,7 +119,7 @@ The client now sees the `kb_*` tools.
 
 | Tool | Purpose | Args |
 |---|---|---|
-| `kb_find` | FTS5 search over name + body | `query`, `type?`, `limit?` |
+| `kb_find` | Ranked search over name + body: FTS5 keywords fused with semantic similarity | `query`, `type?`, `limit?`, `mode?` (`hybrid` \| `semantic` \| `fts`) |
 | `kb_by_term` | Exact keyword lookup | `term`, `type?`, `limit?` |
 | `kb_get` | Full entity by ID | `id` |
 | `kb_traverse` | BFS graph walk | `id`, `relation?`, `maxDepth?` |
@@ -135,6 +136,44 @@ Writes are off by default — set `KB_ALLOW_WRITES=1` in the server env to enabl
 - Already have an ID, need full content → `kb_get`
 - "What does X depend on?" → `kb_traverse` with `relation` filter
 - "What is connected to X?" (one hop, both directions) → `kb_related`
+
+---
+
+## Búsqueda semántica (embeddings)
+
+`kb_find` combina dos búsquedas:
+
+- **FTS5 / BM25**: coincidencia de palabras. Acierta con IDs, códigos y nombres exactos (`R-DIF-011`, `DIVVAL`).
+- **Vectores**: cada entidad (`name + body`) se convierte en un vector de 384 números que representa su significado. Encuentra reglas escritas con otras palabras que la pregunta ("¿puedo pagar en mensualidades?" → "alta de diferido").
+
+Las dos listas se combinan con *Reciprocal Rank Fusion*. La respuesta indica qué método encontró cada hit (`matchedBy`) y en qué modo corrió (`mode`).
+
+Las preguntas en lenguaje natural funcionan aunque lleven `¿?`, guiones o comillas. Si FTS5 rechaza la sintaxis, o el AND implícito de todas las palabras no encuentra nada, se reintenta uniendo las palabras con OR. Esa versión quita palabras vacías como "qué", "pasa" o "puede" y mantiene juntos los IDs con guion.
+
+### Generar los vectores
+
+Se generan offline, después de `ingest`:
+
+```bash
+kb-ingest ingest --db ./kb.db --plugin ./ingest.mjs
+kb-ingest embed  --db ./kb.db        # vectoriza todo lo que hay en la KB
+kb-ingest status --db ./kb.db        # embeddings: { models, missing, stale }
+```
+
+- **Modelo local**: [`Xenova/multilingual-e5-small`](https://huggingface.co/Xenova/multilingual-e5-small). Es multilingüe (incluye español), pesa ~130 MB, corre en CPU y no necesita API key. Se descarga una vez al cache (`KB_EMBED_CACHE_DIR`). Para usar otro: `--model <id de Hugging Face>`.
+- **Incremental**: solo re-vectoriza entidades cuyo texto cambió. Si se cambia de modelo, re-vectoriza todo, porque vectores de modelos distintos no son comparables.
+- **El server usa el modelo registrado en la DB** para convertir las preguntas, así que nunca mezcla modelos.
+- **Sin vectores, todo sigue funcionando**: si la DB no tiene vectores, o el modelo no se puede cargar, `kb_find` usa solo FTS y lo dice en `warning`. `KB_EMBEDDINGS=0` desactiva la búsqueda semántica.
+- **Escala**: la búsqueda vectorial compara contra todas las entidades. Es exacta y rápida hasta ~100k entidades (unos pocos ms con decenas). Más allá, el formato del BLOB ya es el que lee `sqlite-vec`.
+- **Dependencia opcional**: `@huggingface/transformers` es `optionalDependency`; si no está instalada, el server sigue con FTS.
+
+La imagen Docker del server ya trae el modelo descargado (`kb-ingest model-pull` en el build), así que funciona sin acceso a internet.
+
+Test con el modelo real (descarga el modelo la primera vez):
+
+```bash
+KB_TEST_REAL_EMBEDDINGS=1 npx vitest run tests/integration/embeddings-real.test.ts
+```
 
 ---
 
@@ -193,6 +232,8 @@ Verás:
 | `KB_ALLOW_WRITES` | No | `1` para habilitar escrituras desde los agentes |
 | `KB_PORT` | No | Puerto HTTP (default: `3001`) |
 | `KB_MIGRATIONS_DIR` | No | Override del directorio de migraciones |
+| `KB_EMBED_CACHE_DIR` | No | Carpeta del modelo de embeddings (en la imagen Docker: `/app/models`) |
+| `KB_EMBEDDINGS` | No | `0` para desactivar la búsqueda semántica (`kb_find` solo FTS) |
 
 ### Despliegue con Docker (recomendado para el equipo)
 
@@ -302,16 +343,19 @@ See [`examples/minimal-kb/`](examples/minimal-kb/) for a complete working plugin
 kb-ingest init     --db <path>                           Create + migrate the SQLite file.
 kb-ingest ingest   --db <path> --plugin <path> [--opt k=v ...]
                                                           Run a per-project plugin.
-kb-ingest status   --db <path>                            Migrations + entity counts per type.
-kb-ingest query find <text...> --db <path> [--type T] [--limit N]
-                                                          FTS search.
+kb-ingest embed    --db <path> [--model ID] [--batch N]   Embed entities for semantic search (incremental).
+kb-ingest model-pull [--model ID]                         Download the embedding model into KB_EMBED_CACHE_DIR.
+kb-ingest status   --db <path>                            Migrations, entity counts per type, embedding coverage.
+kb-ingest query find <text...> --db <path> [--type T] [--limit N] [--mode hybrid|semantic|fts]
+                                                          Same search as kb_find.
 kb-ingest query term <term>    --db <path> [--type T]
                                                           Keyword lookup.
 kb-ingest query get <id>       --db <path>                Full entity.
 kb-ingest query related <id>   --db <path>                Both directions.
 
 kb-mcp                                                    MCP server (stdio).
-  Reads env: KB_DB_PATH (required), KB_ALLOW_WRITES (opt), KB_MIGRATIONS_DIR (opt).
+  Reads env: KB_DB_PATH (required), KB_ALLOW_WRITES (opt), KB_MIGRATIONS_DIR (opt),
+             KB_EMBED_CACHE_DIR (opt), KB_EMBEDDINGS (opt).
 ```
 
 ---

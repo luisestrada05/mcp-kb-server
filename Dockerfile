@@ -41,13 +41,25 @@ RUN npm run build
 # vitest, no eslint).
 RUN npm prune --omit=dev
 
+# onnxruntime-node (semantic search) ships binaries for every OS plus CUDA /
+# TensorRT providers (~330MB). The server runs inference on CPU, on Linux:
+# keep only that.
+RUN ORT=node_modules/onnxruntime-node/bin/napi-v3 && \
+    rm -rf "$ORT/darwin" "$ORT/win32" && \
+    find "$ORT/linux" -name 'libonnxruntime_providers_cuda.so' -delete && \
+    find "$ORT/linux" -name 'libonnxruntime_providers_tensorrt.so' -delete
+
+# Bake the embedding model (~120MB) into the image so kb_find's semantic
+# search works on hosts without access to huggingface.co.
+RUN KB_EMBED_CACHE_DIR=/app/models node dist/cli/main.js model-pull
+
 
 # ── Stage 2: runtime ────────────────────────────────────────────────────────
 # Minimal image: node + pruned modules + compiled JS + migrations.
 FROM node:22-slim AS runtime
 
 # wget is used by the docker-compose healthcheck. ca-certificates keeps
-# any future outbound HTTPS (e.g. embeddings) working.
+# outbound HTTPS working (e.g. pulling a different embedding model).
 RUN apt-get update && apt-get install -y --no-install-recommends \
       wget ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -57,6 +69,7 @@ WORKDIR /app
 # Run as the non-root `node` user that's already in the base image.
 COPY --from=builder --chown=node:node /app/node_modules ./node_modules
 COPY --from=builder --chown=node:node /app/dist ./dist
+COPY --from=builder --chown=node:node /app/models ./models
 COPY --chown=node:node migrations ./migrations
 COPY --chown=node:node package.json ./
 
@@ -67,6 +80,7 @@ VOLUME ["/data"]
 
 ENV NODE_ENV=production \
     KB_DB_PATH=/data/kb.db \
+    KB_EMBED_CACHE_DIR=/app/models \
     KB_PORT=3001
 
 EXPOSE 3001

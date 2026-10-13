@@ -15,6 +15,9 @@ import { EntityRepo } from '../../../src/repos/EntityRepo.js'
 import { EdgeRepo } from '../../../src/repos/EdgeRepo.js'
 import { SearchRepo } from '../../../src/repos/SearchRepo.js'
 import { registerTools } from '../../../src/server/registerTools.js'
+import { VectorRepo } from '../../../src/repos/VectorRepo.js'
+import { HybridSearch } from '../../../src/search/HybridSearch.js'
+import { FakeEmbedder } from '../../helpers/fakeEmbedder.js'
 
 interface ToolHits {
   count?: number
@@ -111,6 +114,14 @@ describe('MCP tools', () => {
       type: 'rule',
     })
     expect(result.hits?.map((h) => h.id)).toEqual(['r:diferidos'])
+  })
+
+  it('kb_find accepts natural-language questions with FTS5 punctuation', async () => {
+    const result = await callJson<ToolHits & { mode: string }>(bootstrap.client, 'kb_find', {
+      query: '¿qué reglas hay de diferidos?',
+    })
+    expect(result.mode).toBe('fts')
+    expect(result.hits?.map((h) => h.id)).toContain('r:diferidos')
   })
 
   it('kb_get returns full body on hit', async () => {
@@ -230,5 +241,49 @@ describe('MCP write tools', () => {
     } finally {
       b.db.close()
     }
+  })
+})
+
+describe('MCP kb_find with embeddings', () => {
+  it('runs hybrid search when a HybridSearch is registered and the KB has vectors', async () => {
+    const db = new Database({ path: ':memory:' })
+    runMigrations(db)
+    const entities = new EntityRepo(db)
+    const search = new SearchRepo(db)
+    const vectors = new VectorRepo(db)
+    const embedder = new FakeEmbedder()
+    entities.upsertMany([
+      { id: 'r:alta', type: 'rule', name: 'Alta de diferido', body: 'Requiere validación previa.' },
+      { id: 'r:tasa', type: 'rule', name: 'Tasa ordinaria', body: 'Base 360.' },
+    ])
+    for (const [id, text] of [
+      ['r:alta', 'Alta de diferido\nRequiere validación previa.'],
+      ['r:tasa', 'Tasa ordinaria\nBase 360.'],
+    ] as const) {
+      vectors.upsert(id, embedder.model, 'h', await embedder.embedQuery(text))
+    }
+
+    const server = new McpServer({ name: 'test-kb', version: '0.0.0' })
+    const hybrid = new HybridSearch(search, vectors, () => embedder)
+    registerTools(server, { entities, edges: new EdgeRepo(db), search, hybrid })
+    const client = new Client({ name: 'test-client', version: '0.0.0' })
+    const [clientT, serverT] = InMemoryTransport.createLinkedPair()
+    await Promise.all([server.connect(serverT), client.connect(clientT)])
+
+    const result = await callJson<ToolHits & { mode: string; warning?: string }>(client, 'kb_find', {
+      query: '¿puedo pagar a meses?',
+      limit: 1,
+    })
+    expect(result.mode).toBe('hybrid')
+    expect(result.warning).toBeUndefined()
+    expect(result.hits?.[0]?.id).toBe('r:alta')
+
+    const fts = await callJson<ToolHits & { mode: string }>(client, 'kb_find', {
+      query: 'tasa',
+      mode: 'fts',
+    })
+    expect(fts.mode).toBe('fts')
+    expect(fts.hits?.map((h) => h.id)).toEqual(['r:tasa'])
+    db.close()
   })
 })

@@ -17,6 +17,47 @@ interface TermLookupRow {
 }
 
 /**
+ * Spanish question words and fillers that carry no meaning for retrieval
+ * ("¿qué pasa si...?"). OR-ed into a query they match nearly every entity and
+ * drown out the words that matter. Compared without accents.
+ */
+const STOPWORDS = new Set(
+  (
+    'que como cual cuales cuando cuanto cuantos donde quien para por con del los las una uno unos ' +
+    'unas este esta estos estas ese esa eso esto hay pasa pasan puede puedo pueden debe deben cada ' +
+    'todo toda todos todas mas muy ser son esta estan tiene tienen hace hacer algo alguna alguno ' +
+    'cuando sobre entre hasta desde tambien pero porque the and for'
+  ).split(' ')
+)
+
+function stripAccents(s: string): string {
+  return s.normalize('NFD').replace(/\p{M}/gu, '')
+}
+
+/**
+ * Rewrites free text as an FTS5 OR-query. Each term is quoted so punctuation
+ * can't be read as FTS5 syntax. A hyphenated or dotted token such as an ID
+ * ("R-DIF-011") stays together as a phrase instead of splitting into "dif"
+ * and "011". Single words of 4+ letters get a prefix star as a cheap stand-in
+ * for stemming; words under 3 letters and STOPWORDS are dropped. Returns ''
+ * when nothing survives.
+ */
+export function toOrQuery(text: string): string {
+  const terms: string[] = []
+  for (const chunk of text.toLowerCase().split(/\s+/)) {
+    const words = chunk.match(/[\p{L}\p{N}_]+/gu) ?? []
+    if (words.length > 1) {
+      terms.push(`"${words.join(' ')}"`)
+      continue
+    }
+    const w = words[0]
+    if (!w || w.length < 3 || STOPWORDS.has(stripAccents(w))) continue
+    terms.push(w.length >= 4 ? `"${w}"*` : `"${w}"`)
+  }
+  return [...new Set(terms)].join(' OR ')
+}
+
+/**
  * Read-only queries that span search and keyword indexes. Repository methods
  * here NEVER mutate — writes flow through EntityRepo (which keeps FTS in sync
  * via the SQL triggers defined in 0001_init.sql).
@@ -64,6 +105,24 @@ export class SearchRepo {
       snippet: r.snippet,
       rank: r.rank,
     }))
+  }
+
+  /**
+   * fullText for queries typed as natural language ("¿se puede diferir una
+   * compra?"). Tries the query verbatim first so FTS5 operators keep working;
+   * if FTS5 rejects the syntax, or the implicit AND of every word finds
+   * nothing, retries with the words OR-ed together (prefix-matched, so
+   * "diferido" also finds "diferidos") and lets BM25 rank them.
+   */
+  fullTextLenient(query: string, opts: { type?: string; limit?: number } = {}): SearchHit[] {
+    try {
+      const hits = this.fullText(query, opts)
+      if (hits.length > 0) return hits
+    } catch {
+      // FTS5 syntax error — fall through to the tokenized query.
+    }
+    const relaxed = toOrQuery(query)
+    return relaxed ? this.fullText(relaxed, opts) : []
   }
 
   /**

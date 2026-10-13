@@ -74,5 +74,8 @@
     "rag",
     "ai-agents"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "optionalDependencies": {
+    "@huggingface/transformers": "^3.8.1"
+  }
 }
