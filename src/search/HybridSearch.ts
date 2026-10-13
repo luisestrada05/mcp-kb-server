@@ -1,5 +1,5 @@
 import type { SearchRepo } from '../repos/SearchRepo.js'
-import type { VectorRepo, VectorHit } from '../repos/VectorRepo.js'
+import type { VectorRepo, VectorHit, VectorIndexStatus } from '../repos/VectorRepo.js'
 import type { Embedder } from '../embeddings/Embedder.js'
 import type { SearchHit } from '../types/kb.js'
 
@@ -77,6 +77,11 @@ export class HybridSearch {
   /** The embedding model the DB's vectors were built with, or null if none. */
   model(): string | null {
     return this.vectors.models()[0]?.model ?? null
+  }
+
+  /** Whether vector kNN runs on the sqlite-vec index or a JS scan. */
+  vectorEngine(): VectorIndexStatus {
+    return this.vectors.indexStatus()
   }
 
   /**

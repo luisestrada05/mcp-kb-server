@@ -11,7 +11,7 @@ import { runMigrations, listAppliedMigrations } from '../db/migrations.js'
 import { EntityRepo } from '../repos/EntityRepo.js'
 import { EdgeRepo } from '../repos/EdgeRepo.js'
 import { SearchRepo } from '../repos/SearchRepo.js'
-import { VectorRepo } from '../repos/VectorRepo.js'
+import { VectorRepo, type VectorIndexStatus } from '../repos/VectorRepo.js'
 import { HybridSearch, type FindMode } from '../search/HybridSearch.js'
 import { DEFAULT_EMBED_MODEL, TransformersEmbedder, contentHash, entityText } from '../embeddings/Embedder.js'
 import { runIngest } from './runIngest.js'
@@ -83,8 +83,17 @@ program
   .requiredOption('--db <path>', 'Path to the SQLite file.')
   .option('--model <id>', 'Embedding model (Hugging Face id).', DEFAULT_EMBED_MODEL)
   .option('--batch <n>', 'Passages per model call.', '32')
-  .action(async (opts: { db: string; model: string; batch: string }) => {
-    const result = await runEmbed({ dbPath: opts.db, model: opts.model, batchSize: Number(opts.batch) })
+  .option(
+    '--reuse-from <path>',
+    "A previous build's DB: unchanged entities copy their vector from it instead of being re-embedded."
+  )
+  .action(async (opts: { db: string; model: string; batch: string; reuseFrom?: string }) => {
+    const result = await runEmbed({
+      dbPath: opts.db,
+      model: opts.model,
+      batchSize: Number(opts.batch),
+      reuseFrom: opts.reuseFrom,
+    })
     process.stdout.write(JSON.stringify(result, null, 2) + '\n')
   })
 
@@ -267,6 +276,7 @@ function embeddingStatus(db: Database): {
   models: Array<{ model: string; count: number }>
   missing: number
   stale: number
+  index?: VectorIndexStatus
 } {
   const models = new VectorRepo(db).models()
   if (models.length === 0) {
@@ -285,7 +295,7 @@ function embeddingStatus(db: Database): {
     if (r.model === null) missing++
     else if (r.hash !== contentHash(r.model, entityText(r.name, r.body))) stale++
   }
-  return { models, missing, stale }
+  return { models, missing, stale, index: new VectorRepo(db).indexStatus() }
 }
 
 program.parseAsync(process.argv).catch((err: unknown) => {

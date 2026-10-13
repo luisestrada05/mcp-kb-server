@@ -32,6 +32,10 @@ export function warmup(hybrid: HybridSearch | undefined, tag: string): void {
     process.stderr.write(`[${tag}] no embeddings in the KB — kb_find runs FTS only\n`)
     return
   }
+  const engine = hybrid.vectorEngine()
+  process.stderr.write(
+    `[${tag}] vector search: ${engine.engine}${engine.reason ? ` (${engine.reason})` : ''}\n`
+  )
   const started = Date.now()
   hybrid.warmup().then(
     () =>

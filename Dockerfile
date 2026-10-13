@@ -49,8 +49,12 @@ RUN ORT=node_modules/onnxruntime-node/bin/napi-v3 && \
     find "$ORT/linux" -name 'libonnxruntime_providers_cuda.so' -delete && \
     find "$ORT/linux" -name 'libonnxruntime_providers_tensorrt.so' -delete
 
-# Bake the embedding model (~120MB) into the image so kb_find's semantic
-# search works on hosts without access to huggingface.co.
+# Bake the embedding model (~130MB) into the image so kb_find's semantic
+# search works on hosts without access to huggingface.co. A few seconds in
+# CI; it re-runs whenever src/ changes because it sits after the build. If
+# that ever hurts, move it to its own stage (see README, "Si el build tarda
+# demasiado"). Embedding the content itself happens in the content repo's
+# build, not here.
 RUN KB_EMBED_CACHE_DIR=/app/models node dist/cli/main.js model-pull
 
 

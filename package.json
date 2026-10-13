@@ -76,6 +76,7 @@
   ],
   "license": "MIT",
   "optionalDependencies": {
-    "@huggingface/transformers": "^3.8.1"
+    "@huggingface/transformers": "^3.8.1",
+    "sqlite-vec": "^0.1.9"
   }
 }

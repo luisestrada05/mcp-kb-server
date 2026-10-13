@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, renameSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Database } from '../../../src/db/Database.js'
@@ -61,5 +61,42 @@ describe('runEmbed', () => {
     const r = await runEmbed({ dbPath, embedder: new FakeEmbedder('fake/v2'), logger: quiet })
     expect(r).toMatchObject({ embedded: 3, droppedOtherModel: 3 })
     expect(withDb((db) => new VectorRepo(db).models())).toEqual([{ model: 'fake/v2', count: 3 }])
+  })
+
+  it('builds the sqlite-vec index', async () => {
+    const r = await runEmbed({ dbPath, embedder: new FakeEmbedder(), logger: quiet })
+    expect(r.indexed).toBe(3)
+    expect(withDb((db) => new VectorRepo(db).indexStatus())).toEqual({ engine: 'sqlite-vec' })
+  })
+
+  it('--reuse-from copies unchanged vectors from a previous build', async () => {
+    await runEmbed({ dbPath, embedder: new FakeEmbedder(), logger: quiet })
+    const prev = join(tmp, 'prev.db')
+    renameSync(dbPath, prev)
+
+    // A fresh build of the same content, with one rule edited.
+    withDb((db) => {
+      runMigrations(db)
+      new EntityRepo(db).upsertMany([
+        { id: 'a', type: 'rule', name: 'Alta de diferido', body: 'validación previa' },
+        { id: 'b', type: 'rule', name: 'Tasa', body: 'base 360' },
+        { id: 'c', type: 'rule', name: 'Comercios', body: 'pre-aprobados' },
+      ])
+    })
+    const embedder = new FakeEmbedder()
+    const r = await runEmbed({ dbPath, embedder, reuseFrom: prev, logger: quiet })
+    expect(r).toMatchObject({ entities: 3, reused: 2, embedded: 1, indexed: 3 })
+    expect(embedder.calls).toBe(1)
+  })
+
+  it('--reuse-from fails on a missing file instead of creating one', async () => {
+    await expect(
+      runEmbed({
+        dbPath,
+        embedder: new FakeEmbedder(),
+        reuseFrom: join(tmp, 'nope.db'),
+        logger: quiet,
+      })
+    ).rejects.toThrow(/does not exist/)
   })
 })

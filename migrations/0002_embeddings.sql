@@ -11,8 +11,9 @@
 --   * `content_hash` lets `kb-ingest embed` skip entities whose text did not
 --     change since the last run, and lets `status` report stale vectors.
 --   * A plain table (not a sqlite-vec virtual table) keeps the schema loadable
---     without native extensions; search is a brute-force scan, fine up to
---     ~100k entities.
+--     without native extensions. `kb-ingest embed` builds the sqlite-vec
+--     index (`embeddings_vec`) from it outside migrations, so a DB without
+--     the extension still opens and searches by scanning this table.
 
 CREATE TABLE IF NOT EXISTS embeddings (
   entity_id     TEXT PRIMARY KEY REFERENCES entities(id) ON DELETE CASCADE,
