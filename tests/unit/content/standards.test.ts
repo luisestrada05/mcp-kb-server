@@ -65,4 +65,19 @@ describe('content/standards', () => {
     expect(all).toMatch(/STD-SYB-1: ID no cumple/)
     expect(all).toMatch(/STD-SYB-1: falta campo obligatorio "level"/)
   })
+  it('requires a known layer only when the repo declares its layers', () => {
+    writeFileSync(join(tmp, 'sybase', 'naming.yaml'), VALID)
+    const layers = ['bd', 'ms', 'web']
+    const file = join(tmp, 'sybase', 'naming.yaml')
+    expect(validateStandards(loadStandards(tmp), { layers }).errors).toEqual([
+      `${file}: falta metadata.layer (bd, ms, web)`,
+    ])
+    writeFileSync(file, VALID.replace('technology: sybase', 'technology: sybase\n  layer: batch'))
+    expect(validateStandards(loadStandards(tmp), { layers }).errors).toEqual([
+      `${file}: layer "batch" no es válida (bd, ms, web)`,
+    ])
+    writeFileSync(file, VALID.replace('technology: sybase', 'technology: sybase\n  layer: bd'))
+    expect(loadStandards(tmp)[0]?.layer).toBe('bd')
+    expect(validateStandards(loadStandards(tmp), { layers }).errors).toEqual([])
+  })
 })
