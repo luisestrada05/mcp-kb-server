@@ -2,6 +2,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { EntityRepo } from '../repos/EntityRepo.js'
 import type { EdgeRepo } from '../repos/EdgeRepo.js'
 import type { SearchRepo } from '../repos/SearchRepo.js'
+import type { HybridSearch } from '../search/HybridSearch.js'
 import { registerFindTool } from './tools/find.js'
 import { registerGetTool } from './tools/get.js'
 import { registerTraverseTool } from './tools/traverse.js'
@@ -20,10 +21,10 @@ export interface RegisterToolsOptions {
 
 export function registerTools(
   server: McpServer,
-  repos: { entities: EntityRepo; edges: EdgeRepo; search: SearchRepo },
+  repos: { entities: EntityRepo; edges: EdgeRepo; search: SearchRepo; hybrid?: HybridSearch },
   opts: RegisterToolsOptions = {}
 ): void {
-  registerFindTool(server, repos.search)
+  registerFindTool(server, repos.search, repos.hybrid)
   registerGetTool(server, repos.entities)
   registerTraverseTool(server, repos.edges)
   registerRelatedTool(server, repos.edges)

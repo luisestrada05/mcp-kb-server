@@ -48,6 +48,12 @@ export interface SearchHit {
   snippet: string
   /** FTS bm25 rank — lower is better. Only present for FTS-driven searches. */
   rank?: number
+  /** Cosine similarity to the query — higher is better. Only present for vector matches. */
+  similarity?: number
+  /** Reciprocal-rank-fusion score — higher is better. Only present for hybrid searches. */
+  score?: number
+  /** Which retrievers found this hit in a hybrid/semantic search. */
+  matchedBy?: Array<'fts' | 'vector'>
 }
 
 export interface TraverseResult {

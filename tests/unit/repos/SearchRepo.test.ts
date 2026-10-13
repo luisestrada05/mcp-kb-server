@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { Database } from '../../../src/db/Database.js'
 import { runMigrations } from '../../../src/db/migrations.js'
 import { EntityRepo } from '../../../src/repos/EntityRepo.js'
-import { SearchRepo } from '../../../src/repos/SearchRepo.js'
+import { SearchRepo, toOrQuery } from '../../../src/repos/SearchRepo.js'
 
 describe('SearchRepo', () => {
   let db: Database
@@ -101,5 +101,56 @@ describe('SearchRepo', () => {
   it('fullText respects limit', () => {
     const hits = search.fullText('diferidos', { limit: 1 })
     expect(hits).toHaveLength(1)
+  })
+})
+
+describe('SearchRepo.fullTextLenient', () => {
+  let db: Database
+  let search: SearchRepo
+
+  beforeEach(() => {
+    db = new Database({ path: ':memory:' })
+    runMigrations(db)
+    search = new SearchRepo(db)
+    new EntityRepo(db).upsertMany([
+      { id: 'r1', type: 'rule', name: 'Reglas de diferidos', body: 'Sin promoción vigente no hay MSI.' },
+      { id: 'r2', type: 'rule', name: 'Promociones', body: 'Requieren autorización.' },
+    ])
+  })
+
+  afterEach(() => db.close())
+
+  it('accepts punctuation that is FTS5 syntax', () => {
+    expect(() => search.fullText('¿qué pasa con diferidos?')).toThrow()
+    expect(search.fullTextLenient('¿qué pasa con diferidos?').map((h) => h.id)).toEqual(['r1'])
+  })
+
+  it('ORs the words when the implicit AND finds nothing, prefix-matching each', () => {
+    expect(search.fullText('diferido autorización')).toEqual([])
+    const ids = search.fullTextLenient('diferido autorización').map((h) => h.id).sort()
+    expect(ids).toEqual(['r1', 'r2'])
+  })
+
+  it('finds an entity by a hyphenated ID that FTS5 would read as operators', () => {
+    new EntityRepo(db).upsert({ id: 'r3', type: 'rule', name: '[R-DIF-011] Monto mínimo', body: null })
+    expect(() => search.fullText('R-DIF-011')).toThrow()
+    expect(search.fullTextLenient('R-DIF-011').map((h) => h.id)).toEqual(['r3'])
+  })
+
+  it('keeps FTS5 operators when the verbatim query works', () => {
+    expect(search.fullTextLenient('promo*').map((h) => h.id).sort()).toEqual(['r1', 'r2'])
+  })
+})
+
+describe('toOrQuery', () => {
+  it('quotes words, drops short ones and stopwords, prefixes long ones, dedupes', () => {
+    expect(toOrQuery('¿Qué pasa si quiero DIFERIR la compra? diferir')).toBe(
+      '"quiero"* OR "diferir"* OR "compra"*'
+    )
+    expect(toOrQuery('a de la ¿cuándo?')).toBe('')
+  })
+
+  it('keeps hyphenated IDs together as a phrase', () => {
+    expect(toOrQuery('R-DIF-011 pre-aprobados')).toBe('"r dif 011" OR "pre aprobados"')
   })
 })

@@ -11,7 +11,11 @@ import { runMigrations, listAppliedMigrations } from '../db/migrations.js'
 import { EntityRepo } from '../repos/EntityRepo.js'
 import { EdgeRepo } from '../repos/EdgeRepo.js'
 import { SearchRepo } from '../repos/SearchRepo.js'
+import { VectorRepo, type VectorIndexStatus } from '../repos/VectorRepo.js'
+import { HybridSearch, type FindMode } from '../search/HybridSearch.js'
+import { DEFAULT_EMBED_MODEL, TransformersEmbedder, contentHash, entityText } from '../embeddings/Embedder.js'
 import { runIngest } from './runIngest.js'
+import { runEmbed } from './runEmbed.js'
 import { validateRulesFile } from './validate.js'
 
 const program = new Command()
@@ -71,6 +75,41 @@ program
   })
 
 program
+  .command('embed')
+  .description(
+    'Embed every entity (name + body) for semantic search. Run after ingest; ' +
+      'only new or changed entities are re-embedded.'
+  )
+  .requiredOption('--db <path>', 'Path to the SQLite file.')
+  .option('--model <id>', 'Embedding model (Hugging Face id).', DEFAULT_EMBED_MODEL)
+  .option('--batch <n>', 'Passages per model call.', '32')
+  .option(
+    '--reuse-from <path>',
+    "A previous build's DB: unchanged entities copy their vector from it instead of being re-embedded."
+  )
+  .action(async (opts: { db: string; model: string; batch: string; reuseFrom?: string }) => {
+    const result = await runEmbed({
+      dbPath: opts.db,
+      model: opts.model,
+      batchSize: Number(opts.batch),
+      reuseFrom: opts.reuseFrom,
+    })
+    process.stdout.write(JSON.stringify(result, null, 2) + '\n')
+  })
+
+program
+  .command('model-pull')
+  .description(
+    'Download the embedding model into the cache (KB_EMBED_CACHE_DIR) so the ' +
+      'server can run without network access.'
+  )
+  .option('--model <id>', 'Embedding model (Hugging Face id).', DEFAULT_EMBED_MODEL)
+  .action(async (opts: { model: string }) => {
+    await new TransformersEmbedder({ model: opts.model }).embedQuery('warmup')
+    process.stdout.write(`[kb-ingest] model ${opts.model} cached\n`)
+  })
+
+program
   .command('status')
   .description('Print DB stats: applied migrations, entity counts per type.')
   .requiredOption('--db <path>', 'Path to the SQLite file.')
@@ -83,6 +122,7 @@ program
         .all() as Array<{ type: string; c: number }>
       const edgeCount = (db.raw.prepare('SELECT COUNT(*) c FROM edges').get() as { c: number }).c
       const termCount = (db.raw.prepare('SELECT COUNT(*) c FROM terms').get() as { c: number }).c
+      const embeddings = embeddingStatus(db)
 
       process.stdout.write(
         JSON.stringify(
@@ -92,6 +132,7 @@ program
             entities: { total: byType.reduce((acc, r) => acc + r.c, 0), byType },
             edges: edgeCount,
             terms: termCount,
+            embeddings,
           },
           null,
           2
@@ -107,19 +148,28 @@ const query = program.command('query').description('Ad-hoc read queries against 
 
 query
   .command('find <text...>')
-  .description('FTS search (joins multi-word args into one query).')
+  .description('Ranked search, same as the kb_find tool (joins multi-word args into one query).')
   .requiredOption('--db <path>', 'Path to the SQLite file.')
   .option('--type <type>', 'Filter by entity type.')
   .option('--limit <n>', 'Max hits (default 20).', '20')
-  .action((text: string[], opts: { db: string; type?: string; limit: string }) => {
+  .option('--mode <mode>', 'hybrid | semantic | fts (default hybrid).', 'hybrid')
+  .action(async (text: string[], opts: { db: string; type?: string; limit: string; mode: string }) => {
+    if (!['hybrid', 'semantic', 'fts'].includes(opts.mode)) {
+      throw new Error(`--mode must be hybrid, semantic or fts (got ${opts.mode})`)
+    }
     const db = new Database({ path: opts.db, readonly: true })
     try {
-      const search = new SearchRepo(db)
-      const hits = search.fullText(text.join(' '), {
+      const hybrid = new HybridSearch(
+        new SearchRepo(db),
+        new VectorRepo(db),
+        (model) => new TransformersEmbedder({ model })
+      )
+      const result = await hybrid.find(text.join(' '), {
         type: opts.type,
         limit: Number(opts.limit),
+        mode: opts.mode as FindMode,
       })
-      process.stdout.write(JSON.stringify({ count: hits.length, hits }, null, 2) + '\n')
+      process.stdout.write(JSON.stringify({ count: result.hits.length, ...result }, null, 2) + '\n')
     } finally {
       db.close()
     }
@@ -217,6 +267,36 @@ program
       process.exit(1)
     }
   })
+
+/**
+ * Vector coverage for `status`: how many entities have a vector, and how many
+ * vectors are stale (entity text changed since `embed` last ran).
+ */
+function embeddingStatus(db: Database): {
+  models: Array<{ model: string; count: number }>
+  missing: number
+  stale: number
+  index?: VectorIndexStatus
+} {
+  const models = new VectorRepo(db).models()
+  if (models.length === 0) {
+    const total = (db.raw.prepare('SELECT COUNT(*) c FROM entities').get() as { c: number }).c
+    return { models, missing: total, stale: 0 }
+  }
+  const rows = db.raw
+    .prepare(
+      `SELECT e.name, e.body, v.model, v.content_hash AS hash
+       FROM entities e LEFT JOIN embeddings v ON v.entity_id = e.id`
+    )
+    .all() as Array<{ name: string; body: string | null; model: string | null; hash: string | null }>
+  let missing = 0
+  let stale = 0
+  for (const r of rows) {
+    if (r.model === null) missing++
+    else if (r.hash !== contentHash(r.model, entityText(r.name, r.body))) stale++
+  }
+  return { models, missing, stale, index: new VectorRepo(db).indexStatus() }
+}
 
 program.parseAsync(process.argv).catch((err: unknown) => {
   process.stderr.write(`[kb-ingest] FATAL: ${String(err)}\n`)

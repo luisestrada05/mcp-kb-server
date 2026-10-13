@@ -70,3 +70,12 @@ jobs:
           kb-ingest ingest --db ./kb.db --plugin ./ingest.mjs
           kb-ingest status --db ./kb.db | grep -q '"total": 3'
           kb-ingest query term diferidos --db ./kb.db | grep -q 'rule:diferidos'
+
+      # Hybrid search against the real local model (~130MB download). One
+      # matrix leg is enough — the model, not Node, is what this exercises.
+      - name: Real embeddings
+        if: matrix.node == '22'
+        env:
+          KB_TEST_REAL_EMBEDDINGS: '1'
+        run: npx vitest run tests/integration/embeddings-real.test.ts
+        timeout-minutes: 5

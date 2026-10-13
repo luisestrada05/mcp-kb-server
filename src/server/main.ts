@@ -8,6 +8,8 @@
  *   KB_MIGRATIONS_DIR  (optional) override the bundled migrations dir
  *   KB_INSTRUCTIONS_FILE (optional) markdown sent to clients as the server's
  *                      `instructions` — when and how agents should consult the KB
+ *   KB_EMBED_CACHE_DIR (optional) where the embedding model is cached/downloaded
+ *   KB_EMBEDDINGS      (optional) "0" to disable semantic search (FTS only)
  *
  * Consumers wire this into `.mcp.json` like:
  *
@@ -27,6 +29,7 @@ import { runMigrations } from '../db/migrations.js'
 import { EntityRepo } from '../repos/EntityRepo.js'
 import { EdgeRepo } from '../repos/EdgeRepo.js'
 import { SearchRepo } from '../repos/SearchRepo.js'
+import { createHybridSearch, warmup } from './search.js'
 import { registerTools } from './registerTools.js'
 import { loadInstructions } from './instructions.js'
 
@@ -44,11 +47,15 @@ async function main(): Promise<void> {
   const db = new Database({ path: dbPath })
   runMigrations(db, process.env.KB_MIGRATIONS_DIR)
 
+  const search = new SearchRepo(db)
+  const hybrid = createHybridSearch(db, search)
   const repos = {
     entities: new EntityRepo(db),
     edges: new EdgeRepo(db),
-    search: new SearchRepo(db),
+    search,
+    hybrid,
   }
+  warmup(hybrid, 'kb-mcp')
 
   const server = new McpServer(
     { name: '@kb/mcp-server', version: '0.1.0' },
