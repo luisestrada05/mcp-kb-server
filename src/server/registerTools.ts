@@ -8,6 +8,7 @@ import { registerGetTool } from './tools/get.js'
 import { registerTraverseTool } from './tools/traverse.js'
 import { registerRelatedTool } from './tools/related.js'
 import { registerByTermTool } from './tools/byTerm.js'
+import { registerContextTool } from './tools/context.js'
 import { registerWriteTools } from './tools/writes.js'
 
 export interface RegisterToolsOptions {
@@ -26,6 +27,7 @@ export function registerTools(
 ): void {
   registerFindTool(server, repos.search, repos.hybrid)
   registerGetTool(server, repos.entities)
+  registerContextTool(server, repos.entities, repos.edges)
   registerTraverseTool(server, repos.edges)
   registerRelatedTool(server, repos.edges)
   registerByTermTool(server, repos.search)

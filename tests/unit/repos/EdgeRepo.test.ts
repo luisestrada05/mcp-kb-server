@@ -89,6 +89,18 @@ describe('EdgeRepo', () => {
     expect(edges.traverse('ghost')).toEqual([])
   })
 
+  it('neighbors summarizes the entity on the other end of each edge', () => {
+    edges.upsert({ src: 'b', dst: 'a', relation: 'overrides', metadata: { since: '2025' } })
+    const n = edges.neighbors('a')
+    expect(n.outgoing).toEqual([
+      { relation: 'cites', id: 'c', type: 'rule', name: 'C' },
+      { relation: 'depends_on', id: 'b', type: 'rule', name: 'B' },
+    ])
+    expect(n.incoming).toEqual([
+      { relation: 'overrides', id: 'b', type: 'rule', name: 'B', metadata: { since: '2025' } },
+    ])
+  })
+
   it('related returns both directions', () => {
     const r = edges.related('b')
     expect(r.outgoing.map((e) => e.dst)).toEqual(['c'])

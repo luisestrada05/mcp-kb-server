@@ -30,7 +30,8 @@ The server itself is **read-only by default** — writes flow through an offline
 ┌─────────────────────────────────────────────────────────────┐
 │  GENERIC MCP SERVER (this package)                          │
 │  Tools exposed to Claude/Copilot/any MCP client:            │
-│   kb_find   kb_by_term   kb_get   kb_traverse   kb_related  │
+│   kb_find   kb_by_term   kb_get   kb_context                │
+│   kb_traverse   kb_related                                  │
 │   kb_add_entity   kb_add_edge   (opt-in via KB_ALLOW_WRITES)│
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -122,6 +123,7 @@ The client now sees the `kb_*` tools.
 | `kb_find` | Ranked search over name + body: FTS5 keywords fused with semantic similarity | `query`, `type?`, `limit?` (default 8), `mode?` (`hybrid` \| `semantic` \| `fts`), `debug?` |
 | `kb_by_term` | Exact keyword lookup | `term`, `type?`, `limit?` (default 8) |
 | `kb_get` | Full entity by ID | `id` |
+| `kb_context` | Full entity + direct neighbors both ways (`relation`, `id`, `type`, `name`) | `id` |
 | `kb_traverse` | BFS graph walk (summaries: `id`, `type`, `name`) | `id`, `relation?`, `maxDepth?`, `include?` (`summary` \| `full`) |
 | `kb_related` | Outgoing + incoming edges | `id` |
 | `kb_add_entity` (opt-in) | Upsert entity | `id`, `type`, `name`, `body?`, `metadata?`, `sourcePath?` |
@@ -135,13 +137,15 @@ Everything a tool returns is read by the agent's LLM, so responses are kept smal
 
 - Compact JSON (no indentation).
 - `kb_find` / `kb_by_term` return 8 hits by default (`limit` up to 100), and each hit carries only `id`, `type`, `name`, `snippet`. Hits are already ordered best-first; `kb_find` with `debug: true` adds `rank`, `score`, `similarity`, `matchedBy`.
+- `kb_context` replaces the `kb_get` + `kb_related` (+ a `kb_get` per neighbor to learn its name) round trips: each tool call re-sends the conversation, so fewer calls save more than smaller payloads.
 - `kb_traverse` returns `{ id, type, name }` per node; fetch bodies with `kb_get`, or pass `include: "full"` to inline them.
 
 ### When to use which
 
 - Saw a domain keyword in the request → `kb_by_term`
 - Free-form question ("how do we handle X?") → `kb_find`
-- Already have an ID, need full content → `kb_get`
+- About to act on an entity (rule, SP, decision) → `kb_context`: body + what it points at + what points at it, in one call
+- Already have an ID, need only its content → `kb_get`
 - "What does X depend on?" → `kb_traverse` with `relation` filter
 - "What is connected to X?" (one hop, both directions) → `kb_related`
 

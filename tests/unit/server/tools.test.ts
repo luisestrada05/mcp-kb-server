@@ -99,10 +99,17 @@ describe('MCP tools', () => {
     bootstrap.db.close()
   })
 
-  it('exposes the 5 read tools (no writes by default)', async () => {
+  it('exposes the 6 read tools (no writes by default)', async () => {
     const { tools } = await bootstrap.client.listTools()
     const names = tools.map((t) => t.name).sort()
-    expect(names).toEqual(['kb_by_term', 'kb_find', 'kb_get', 'kb_related', 'kb_traverse'])
+    expect(names).toEqual([
+      'kb_by_term',
+      'kb_context',
+      'kb_find',
+      'kb_get',
+      'kb_related',
+      'kb_traverse',
+    ])
   })
 
   it('kb_find runs FTS and returns ranked hits', async () => {
@@ -240,6 +247,31 @@ describe('MCP tools', () => {
       limit: 20,
     })
     expect(more.count).toBe(14) // 12 extras + r:diferidos + f:calc
+  })
+
+  it('kb_context returns the full entity plus summarized neighbors both ways', async () => {
+    const result = await callJson<{
+      found: boolean
+      entity: { id: string; body: string; metadata: Record<string, unknown> }
+      outgoing: Array<Record<string, unknown>>
+      incoming: Array<Record<string, unknown>>
+    }>(bootstrap.client, 'kb_context', { id: 'r:diferidos' })
+    expect(result.found).toBe(true)
+    expect(result.entity.body).toContain('promoción vigente')
+    expect(result.entity.metadata).toEqual({ severity: 'critical' })
+    expect(result.outgoing).toEqual([
+      { relation: 'cites', id: 'r:promos', type: 'rule', name: 'Promociones bancarias' },
+    ])
+    expect(result.incoming).toEqual([
+      { relation: 'depends_on', id: 'f:calc', type: 'feature', name: 'Calculadora de diferidos' },
+    ])
+  })
+
+  it('kb_context returns found=false for unknown ID', async () => {
+    const result = await callJson<{ found: boolean; id: string }>(bootstrap.client, 'kb_context', {
+      id: 'ghost',
+    })
+    expect(result).toEqual({ found: false, id: 'ghost' })
   })
 
   it('kb_related returns both directions', async () => {

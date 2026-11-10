@@ -1,11 +1,26 @@
 import type { Database } from '../db/Database.js'
-import type { Edge, EdgeInput, Entity, TraverseResult } from '../types/kb.js'
+import type { Edge, EdgeInput, Entity, Neighbor, TraverseResult } from '../types/kb.js'
 
 interface EdgeRow {
   src: string
   dst: string
   relation: string
   metadata: string
+}
+
+interface NeighborRow {
+  relation: string
+  id: string
+  type: string | null
+  name: string | null
+  metadata: string
+}
+
+function rowToNeighbor(row: NeighborRow): Neighbor {
+  const metadata = JSON.parse(row.metadata) as Record<string, unknown>
+  const n: Neighbor = { relation: row.relation, id: row.id, type: row.type, name: row.name }
+  if (Object.keys(metadata).length > 0) n.metadata = metadata
+  return n
 }
 
 interface EntityRow {
@@ -103,6 +118,28 @@ export class EdgeRepo {
     return rows.map(rowToEdge)
   }
 
+  /**
+   * Edges touching `id` in both directions, each joined with a summary
+   * (type, name) of the entity on the other end. One query per direction.
+   */
+  neighbors(id: string): { outgoing: Neighbor[]; incoming: Neighbor[] } {
+    const outgoing = this.db.raw
+      .prepare(
+        `SELECT e.relation, e.dst AS id, n.type, n.name, e.metadata
+           FROM edges e LEFT JOIN entities n ON n.id = e.dst
+          WHERE e.src = ? ORDER BY e.relation, e.dst`
+      )
+      .all(id) as NeighborRow[]
+    const incoming = this.db.raw
+      .prepare(
+        `SELECT e.relation, e.src AS id, n.type, n.name, e.metadata
+           FROM edges e LEFT JOIN entities n ON n.id = e.src
+          WHERE e.dst = ? ORDER BY e.relation, e.src`
+      )
+      .all(id) as NeighborRow[]
+    return { outgoing: outgoing.map(rowToNeighbor), incoming: incoming.map(rowToNeighbor) }
+  }
+
   /** All edges touching `id` (in or out). */
   related(id: string): { outgoing: Edge[]; incoming: Edge[] } {
     return { outgoing: this.outgoing(id), incoming: this.incoming(id) }
@@ -129,7 +166,9 @@ export class EdgeRepo {
     }
 
     const visited = new Set<string>([start])
-    const results: TraverseResult[] = [{ entity: rowToEntity(startEntity), depth: 0, relation: null }]
+    const results: TraverseResult[] = [
+      { entity: rowToEntity(startEntity), depth: 0, relation: null },
+    ]
 
     let frontier: Array<{ id: string }> = [{ id: start }]
     for (let depth = 1; depth <= maxDepth; depth++) {
