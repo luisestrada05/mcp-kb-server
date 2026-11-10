@@ -119,15 +119,23 @@ The client now sees the `kb_*` tools.
 
 | Tool | Purpose | Args |
 |---|---|---|
-| `kb_find` | Ranked search over name + body: FTS5 keywords fused with semantic similarity | `query`, `type?`, `limit?`, `mode?` (`hybrid` \| `semantic` \| `fts`) |
-| `kb_by_term` | Exact keyword lookup | `term`, `type?`, `limit?` |
+| `kb_find` | Ranked search over name + body: FTS5 keywords fused with semantic similarity | `query`, `type?`, `limit?` (default 8), `mode?` (`hybrid` \| `semantic` \| `fts`), `debug?` |
+| `kb_by_term` | Exact keyword lookup | `term`, `type?`, `limit?` (default 8) |
 | `kb_get` | Full entity by ID | `id` |
-| `kb_traverse` | BFS graph walk | `id`, `relation?`, `maxDepth?` |
+| `kb_traverse` | BFS graph walk (summaries: `id`, `type`, `name`) | `id`, `relation?`, `maxDepth?`, `include?` (`summary` \| `full`) |
 | `kb_related` | Outgoing + incoming edges | `id` |
 | `kb_add_entity` (opt-in) | Upsert entity | `id`, `type`, `name`, `body?`, `metadata?`, `sourcePath?` |
 | `kb_add_edge` (opt-in) | Upsert edge | `src`, `dst`, `relation`, `metadata?` |
 
 Writes are off by default — set `KB_ALLOW_WRITES=1` in the server env to enable.
+
+### Token budget
+
+Everything a tool returns is read by the agent's LLM, so responses are kept small:
+
+- Compact JSON (no indentation).
+- `kb_find` / `kb_by_term` return 8 hits by default (`limit` up to 100), and each hit carries only `id`, `type`, `name`, `snippet`. Hits are already ordered best-first; `kb_find` with `debug: true` adds `rank`, `score`, `similarity`, `matchedBy`.
+- `kb_traverse` returns `{ id, type, name }` per node; fetch bodies with `kb_get`, or pass `include: "full"` to inline them.
 
 ### When to use which
 
@@ -146,7 +154,7 @@ Writes are off by default — set `KB_ALLOW_WRITES=1` in the server env to enabl
 - **FTS5 / BM25**: coincidencia de palabras. Acierta con IDs, códigos y nombres exactos (`R-DIF-011`, `DIVVAL`).
 - **Vectores**: cada entidad (`name + body`) se convierte en un vector de 384 números que representa su significado. Encuentra reglas escritas con otras palabras que la pregunta ("¿puedo pagar en mensualidades?" → "alta de diferido").
 
-Las dos listas se combinan con *Reciprocal Rank Fusion*. La respuesta indica qué método encontró cada hit (`matchedBy`) y en qué modo corrió (`mode`).
+Las dos listas se combinan con *Reciprocal Rank Fusion*. La respuesta indica en qué modo corrió (`mode`); con `debug: true`, cada hit dice además qué método lo encontró (`matchedBy`) y sus puntajes.
 
 Las preguntas en lenguaje natural funcionan aunque lleven `¿?`, guiones o comillas. Si FTS5 rechaza la sintaxis, o el AND implícito de todas las palabras no encuentra nada, se reintenta uniendo las palabras con OR. Esa versión quita palabras vacías como "qué", "pasa" o "puede" y mantiene juntos los IDs con guion.
 

@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { EntityRepo } from '../../repos/EntityRepo.js'
+import { jsonResult } from './output.js'
 
 /**
  * kb_get — Fetch a full entity by ID.
@@ -24,16 +25,7 @@ export function registerGetTool(server: McpServer, entities: EntityRepo): void {
     },
     (args) => {
       const entity = entities.getById(args.id)
-      if (!entity) {
-        return {
-          content: [
-            { type: 'text', text: JSON.stringify({ found: false, id: args.id }, null, 2) },
-          ],
-        }
-      }
-      return {
-        content: [{ type: 'text', text: JSON.stringify({ found: true, entity }, null, 2) }],
-      }
+      return jsonResult(entity ? { found: true, entity } : { found: false, id: args.id })
     }
   )
 }

@@ -10,11 +10,7 @@ import type { EdgeRepo } from '../../repos/EdgeRepo.js'
  * review. Enable writes when you want the agent to propose new relations or
  * provisional entities that the ingestion pipeline can later ratify.
  */
-export function registerWriteTools(
-  server: McpServer,
-  entities: EntityRepo,
-  edges: EdgeRepo
-): void {
+export function registerWriteTools(server: McpServer, entities: EntityRepo, edges: EdgeRepo): void {
   server.registerTool(
     'kb_add_entity',
     {
@@ -44,9 +40,7 @@ export function registerWriteTools(
         sourcePath: args.sourcePath ?? null,
       })
       return {
-        content: [
-          { type: 'text', text: JSON.stringify({ upserted: true, id: args.id }, null, 2) },
-        ],
+        content: [{ type: 'text', text: JSON.stringify({ upserted: true, id: args.id }) }],
       }
     }
   )
@@ -78,16 +72,12 @@ export function registerWriteTools(
           content: [
             {
               type: 'text',
-              text: JSON.stringify(
-                {
-                  error: 'missing_endpoint',
-                  srcExists,
-                  dstExists,
-                  hint: 'Both src and dst must be inserted as entities first via kb_add_entity.',
-                },
-                null,
-                2
-              ),
+              text: JSON.stringify({
+                error: 'missing_endpoint',
+                srcExists,
+                dstExists,
+                hint: 'Both src and dst must be inserted as entities first via kb_add_entity.',
+              }),
             },
           ],
           isError: true,
@@ -103,11 +93,12 @@ export function registerWriteTools(
         content: [
           {
             type: 'text',
-            text: JSON.stringify(
-              { upserted: true, src: args.src, dst: args.dst, relation: args.relation },
-              null,
-              2
-            ),
+            text: JSON.stringify({
+              upserted: true,
+              src: args.src,
+              dst: args.dst,
+              relation: args.relation,
+            }),
           },
         ],
       }

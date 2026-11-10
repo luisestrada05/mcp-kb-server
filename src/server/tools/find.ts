@@ -2,6 +2,7 @@ import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { SearchRepo } from '../../repos/SearchRepo.js'
 import type { HybridSearch, FindResult } from '../../search/HybridSearch.js'
+import { DEFAULT_TOOL_LIMIT, jsonResult, shapeHits } from './output.js'
 
 /**
  * kb_find — Ranked search over the knowledge graph: FTS5 / BM25 keyword
@@ -49,7 +50,7 @@ export function registerFindTool(
           .min(1)
           .max(100)
           .optional()
-          .describe('Max hits to return (default 20, max 100).'),
+          .describe(`Max hits to return (default ${DEFAULT_TOOL_LIMIT}, max 100).`),
         mode: z
           .enum(['hybrid', 'semantic', 'fts'])
           .optional()
@@ -57,23 +58,28 @@ export function registerFindTool(
             '"hybrid" (default): keywords + meaning. "semantic": meaning only. ' +
               '"fts": keywords only — best for exact IDs or codes.'
           ),
+        debug: z
+          .boolean()
+          .optional()
+          .describe(
+            'Include ranking internals per hit (rank, score, similarity, matchedBy). ' +
+              'Off by default: hits are already ordered best-first.'
+          ),
       },
     },
     async (args) => {
+      const limit = args.limit ?? DEFAULT_TOOL_LIMIT
       const result: FindResult = hybrid
-        ? await hybrid.find(args.query, { type: args.type, limit: args.limit, mode: args.mode })
+        ? await hybrid.find(args.query, { type: args.type, limit, mode: args.mode })
         : {
             mode: 'fts',
-            hits: search.fullTextLenient(args.query, { type: args.type, limit: args.limit }),
+            hits: search.fullTextLenient(args.query, { type: args.type, limit }),
           }
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({ count: result.hits.length, ...result }, null, 2),
-          },
-        ],
-      }
+      return jsonResult({
+        count: result.hits.length,
+        ...result,
+        hits: shapeHits(result.hits, args.debug),
+      })
     }
   )
 }

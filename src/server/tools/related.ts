@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { EdgeRepo } from '../../repos/EdgeRepo.js'
+import { jsonResult } from './output.js'
 
 /**
  * kb_related — All edges touching an entity, in both directions.
@@ -28,24 +29,13 @@ export function registerRelatedTool(server: McpServer, edges: EdgeRepo): void {
     },
     (args) => {
       const r = edges.related(args.id)
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(
-              {
-                id: args.id,
-                outgoingCount: r.outgoing.length,
-                incomingCount: r.incoming.length,
-                outgoing: r.outgoing,
-                incoming: r.incoming,
-              },
-              null,
-              2
-            ),
-          },
-        ],
-      }
+      return jsonResult({
+        id: args.id,
+        outgoingCount: r.outgoing.length,
+        incomingCount: r.incoming.length,
+        outgoing: r.outgoing,
+        incoming: r.incoming,
+      })
     }
   )
 }
