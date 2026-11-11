@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { SearchRepo } from '../../repos/SearchRepo.js'
+import { DEFAULT_TOOL_LIMIT, jsonResult, shapeHits } from './output.js'
 
 /**
  * kb_by_term — Exact keyword lookup against the curated term index.
@@ -36,19 +37,15 @@ export function registerByTermTool(server: McpServer, search: SearchRepo): void 
           .min(1)
           .max(100)
           .optional()
-          .describe('Max hits (default 20, max 100).'),
+          .describe(`Max hits (default ${DEFAULT_TOOL_LIMIT}, max 100).`),
       },
     },
     (args) => {
-      const hits = search.byTerm(args.term, { type: args.type, limit: args.limit })
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({ term: args.term, count: hits.length, hits }, null, 2),
-          },
-        ],
-      }
+      const hits = search.byTerm(args.term, {
+        type: args.type,
+        limit: args.limit ?? DEFAULT_TOOL_LIMIT,
+      })
+      return jsonResult({ term: args.term, count: hits.length, hits: shapeHits(hits) })
     }
   )
 }

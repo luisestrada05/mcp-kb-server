@@ -49,7 +49,11 @@ async function bootKb(allowWrites: boolean): Promise<{
   return { client, server, db, entities, edges, search }
 }
 
-async function callJson<T>(client: Client, name: string, args: Record<string, unknown>): Promise<T> {
+async function callJson<T>(
+  client: Client,
+  name: string,
+  args: Record<string, unknown>
+): Promise<T> {
   const result = await client.callTool({ name, arguments: args })
   const content = result.content as Array<{ type: string; text: string }>
   const text = content[0]?.text
@@ -95,10 +99,17 @@ describe('MCP tools', () => {
     bootstrap.db.close()
   })
 
-  it('exposes the 5 read tools (no writes by default)', async () => {
+  it('exposes the 6 read tools (no writes by default)', async () => {
     const { tools } = await bootstrap.client.listTools()
     const names = tools.map((t) => t.name).sort()
-    expect(names).toEqual(['kb_by_term', 'kb_find', 'kb_get', 'kb_related', 'kb_traverse'])
+    expect(names).toEqual([
+      'kb_by_term',
+      'kb_context',
+      'kb_find',
+      'kb_get',
+      'kb_related',
+      'kb_traverse',
+    ])
   })
 
   it('kb_find runs FTS and returns ranked hits', async () => {
@@ -166,6 +177,101 @@ describe('MCP tools', () => {
     }>(bootstrap.client, 'kb_traverse', { id: 'r:diferidos', relation: 'cites', maxDepth: 3 })
     expect(result.count).toBe(2)
     expect(result.results.map((r) => r.entity.id)).toEqual(['r:diferidos', 'r:promos'])
+  })
+
+  it('kb_traverse returns summaries by default and full entities on include="full"', async () => {
+    type Results = { results: Array<{ entity: Record<string, unknown> }> }
+    const summary = await callJson<Results>(bootstrap.client, 'kb_traverse', { id: 'f:calc' })
+    for (const r of summary.results) {
+      expect(Object.keys(r.entity).sort()).toEqual(['id', 'name', 'type'])
+    }
+
+    const full = await callJson<Results>(bootstrap.client, 'kb_traverse', {
+      id: 'f:calc',
+      include: 'full',
+    })
+    expect(full.results[1]?.entity.body).toContain('promoción vigente')
+    expect(full.results[1]?.entity.metadata).toEqual({ severity: 'critical' })
+  })
+
+  it('responses are compact JSON (no indentation)', async () => {
+    const result = await bootstrap.client.callTool({
+      name: 'kb_get',
+      arguments: { id: 'r:diferidos' },
+    })
+    const text = (result.content as Array<{ text: string }>)[0]!.text
+    expect(text).not.toContain('\n')
+    expect(text.startsWith('{"found":true')).toBe(true)
+  })
+
+  it('kb_find and kb_by_term hide ranking internals unless debug is set', async () => {
+    const find = await callJson<{ hits: Array<Record<string, unknown>> }>(
+      bootstrap.client,
+      'kb_find',
+      { query: 'diferidos' }
+    )
+    expect(Object.keys(find.hits[0]!).sort()).toEqual(['id', 'name', 'snippet', 'type'])
+
+    const debug = await callJson<{ hits: Array<Record<string, unknown>> }>(
+      bootstrap.client,
+      'kb_find',
+      { query: 'diferidos', debug: true }
+    )
+    expect(typeof debug.hits[0]?.rank).toBe('number')
+
+    const byTerm = await callJson<{ hits: Array<Record<string, unknown>> }>(
+      bootstrap.client,
+      'kb_by_term',
+      { term: 'diferidos' }
+    )
+    expect(Object.keys(byTerm.hits[0]!).sort()).toEqual(['id', 'name', 'snippet', 'type'])
+  })
+
+  it('kb_find and kb_by_term default to 8 hits', async () => {
+    bootstrap.entities.upsertMany(
+      Array.from({ length: 12 }, (_, i) => ({
+        id: `r:extra-${i}`,
+        type: 'rule',
+        name: `Regla extra ${i}`,
+        body: 'Otra regla sobre diferidos.',
+      }))
+    )
+    for (let i = 0; i < 12; i++) bootstrap.search.addTerms(`r:extra-${i}`, ['diferidos'])
+
+    const find = await callJson<ToolHits>(bootstrap.client, 'kb_find', { query: 'diferidos' })
+    expect(find.count).toBe(8)
+    const byTerm = await callJson<ToolHits>(bootstrap.client, 'kb_by_term', { term: 'diferidos' })
+    expect(byTerm.count).toBe(8)
+    const more = await callJson<ToolHits>(bootstrap.client, 'kb_find', {
+      query: 'diferidos',
+      limit: 20,
+    })
+    expect(more.count).toBe(14) // 12 extras + r:diferidos + f:calc
+  })
+
+  it('kb_context returns the full entity plus summarized neighbors both ways', async () => {
+    const result = await callJson<{
+      found: boolean
+      entity: { id: string; body: string; metadata: Record<string, unknown> }
+      outgoing: Array<Record<string, unknown>>
+      incoming: Array<Record<string, unknown>>
+    }>(bootstrap.client, 'kb_context', { id: 'r:diferidos' })
+    expect(result.found).toBe(true)
+    expect(result.entity.body).toContain('promoción vigente')
+    expect(result.entity.metadata).toEqual({ severity: 'critical' })
+    expect(result.outgoing).toEqual([
+      { relation: 'cites', id: 'r:promos', type: 'rule', name: 'Promociones bancarias' },
+    ])
+    expect(result.incoming).toEqual([
+      { relation: 'depends_on', id: 'f:calc', type: 'feature', name: 'Calculadora de diferidos' },
+    ])
+  })
+
+  it('kb_context returns found=false for unknown ID', async () => {
+    const result = await callJson<{ found: boolean; id: string }>(bootstrap.client, 'kb_context', {
+      id: 'ghost',
+    })
+    expect(result).toEqual({ found: false, id: 'ghost' })
   })
 
   it('kb_related returns both directions', async () => {
@@ -270,10 +376,14 @@ describe('MCP kb_find with embeddings', () => {
     const [clientT, serverT] = InMemoryTransport.createLinkedPair()
     await Promise.all([server.connect(serverT), client.connect(clientT)])
 
-    const result = await callJson<ToolHits & { mode: string; warning?: string }>(client, 'kb_find', {
-      query: '¿puedo pagar a meses?',
-      limit: 1,
-    })
+    const result = await callJson<ToolHits & { mode: string; warning?: string }>(
+      client,
+      'kb_find',
+      {
+        query: '¿puedo pagar a meses?',
+        limit: 1,
+      }
+    )
     expect(result.mode).toBe('hybrid')
     expect(result.warning).toBeUndefined()
     expect(result.hits?.[0]?.id).toBe('r:alta')

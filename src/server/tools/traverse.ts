@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { EdgeRepo } from '../../repos/EdgeRepo.js'
+import { jsonResult } from './output.js'
 
 /**
  * kb_traverse — Walk the graph outwards from a starting node.
@@ -23,6 +24,8 @@ export function registerTraverseTool(server: McpServer, edges: EdgeRepo): void {
         'BFS from `id` following OUTGOING edges only, optionally filtered by `relation`. ' +
         'Returns the start node (depth 0) plus every reachable entity up to `maxDepth` (default 1). ' +
         'Each result has { entity, depth, relation } — relation is null for the start node. ' +
+        'By default each entity is a summary { id, type, name }: call kb_get(id) for the body ' +
+        'of the ones you need, or pass include: "full" to get every body inline. ' +
         'Cycles are de-duplicated. ' +
         'Does NOT follow incoming edges: entities that point AT `id` (e.g. an exception that ' +
         'overrides a rule, a decision that drove it) will not appear. To surface incoming ' +
@@ -43,6 +46,13 @@ export function registerTraverseTool(server: McpServer, edges: EdgeRepo): void {
           .max(10)
           .optional()
           .describe('Max BFS depth (default 1, max 10).'),
+        include: z
+          .enum(['summary', 'full'])
+          .optional()
+          .describe(
+            '"summary" (default): id, type and name per entity. "full": the whole entity ' +
+              '(body, metadata, sourcePath) — costly on wide graphs.'
+          ),
       },
     },
     (args) => {
@@ -50,21 +60,16 @@ export function registerTraverseTool(server: McpServer, edges: EdgeRepo): void {
         relation: args.relation,
         maxDepth: args.maxDepth,
       })
-      if (results.length === 0) {
-        return {
-          content: [
-            { type: 'text', text: JSON.stringify({ found: false, id: args.id }, null, 2) },
-          ],
-        }
-      }
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({ count: results.length, results }, null, 2),
-          },
-        ],
-      }
+      if (results.length === 0) return jsonResult({ found: false, id: args.id })
+      const shaped =
+        args.include === 'full'
+          ? results
+          : results.map(({ entity, depth, relation }) => ({
+              entity: { id: entity.id, type: entity.type, name: entity.name },
+              depth,
+              relation,
+            }))
+      return jsonResult({ count: shaped.length, results: shaped })
     }
   )
 }

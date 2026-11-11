@@ -63,3 +63,14 @@ export interface TraverseResult {
   /** The relation that led to this node from its parent (null for the start node). */
   relation: string | null
 }
+
+/** An edge seen from one endpoint, with the entity on the other end summarized. */
+export interface Neighbor {
+  relation: string
+  id: string
+  /** Null when the edge points at an ID with no entity row. */
+  type: string | null
+  name: string | null
+  /** Present only when the edge has metadata. */
+  metadata?: Record<string, unknown>
+}
